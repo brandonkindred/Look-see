@@ -3450,10 +3450,11 @@ public class BrowserService {
 			//BufferedImage img = browser.getElementScreenshot(form_elem);
 			//String checksum = PageState.getFileChecksum(img);
 			//Map<String, String> css_map = CssUtils.loadCssProperties(form_elem);
+			String xpath = uniqifyXpath(form_elem, "//form", browser);
 			com.looksee.models.Element form_tag = new com.looksee.models.Element(
 					form_elem.getText(),
-					uniqifyXpath(form_elem, "//form", browser),
-					form_elem.getTagName(),
+					xpath,
+					extractTagFromXpath(xpath),
 					browser.extractAttributes(form_elem),
 					new HashMap<>(),
 					form_elem.getAttribute("innerHTML"),
