@@ -95,6 +95,37 @@ class RemoteWebElementWiredMethodsTest {
     }
 
     @Test
+    void findElement_propagatesBrowsingClientExceptionFromBindCheck() {
+        when(client.executeScript(eq("s1"), argThat(script ->
+                script != null && script.contains("document.evaluate")), any()))
+            .thenThrow(new BrowsingClientException("executeScript failed",
+                new ApiException(503, "unavailable")));
+
+        assertThrows(BrowsingClientException.class,
+            () -> el.findElement(By.xpath("./input")));
+        verify(client, never()).findElement(eq("s1"), startsWith("((//button)"));
+    }
+
+    @Test
+    void isLegacyElementMiss404_ignoresRequestContextInWrapperMessage() {
+        // BrowsingClient embeds session + xpath in the wrapper message; locator
+        // text must not flip a generic proxy 404 into a legacy element miss.
+        BrowsingClientException ex = new BrowsingClientException(
+            "findElement failed: s1 //*[text()='element not found']",
+            new ApiException(404, "Not Found"));
+        assertFalse(RemoteWebElement.isLegacyElementMiss404(ex));
+    }
+
+    @Test
+    void isLegacyElementMiss404_acceptsStructuredApiElementMiss() {
+        BrowsingClientException ex = new BrowsingClientException(
+            "findElement failed: s1 //foo",
+            new ApiException(404, "Not Found", null,
+                "{\"error\":{\"code\":\"element_not_found\"}}"));
+        assertTrue(RemoteWebElement.isLegacyElementMiss404(ex));
+    }
+
+    @Test
     void findElements_propagatesSessionNotFoundInsteadOfTruncating() {
         ElementState first = new ElementState()
             .elementHandle("tr-1").found(true).displayed(true).attributes(Map.of());

@@ -197,7 +197,10 @@ public final class RemoteWebElement implements WebElement {
         if (api == null || api.getCode() != 404) {
             return false;
         }
-        String lower = errorHaystack(e, api).toLowerCase(Locale.ROOT);
+        // Classify only the underlying API payload — not BrowsingClientException's
+        // wrapper message, which embeds sessionId + xpath and can false-match
+        // phrases like "element not found" from locator text.
+        String lower = apiErrorHaystack(api).toLowerCase(Locale.ROOT);
         if (lower.contains("session_not_found") || lower.contains("session not found")) {
             return false;
         }
@@ -207,11 +210,8 @@ public final class RemoteWebElement implements WebElement {
             || lower.contains("no such element");
     }
 
-    private static String errorHaystack(BrowsingClientException e, ApiException api) {
+    private static String apiErrorHaystack(ApiException api) {
         StringBuilder haystack = new StringBuilder();
-        if (e.getMessage() != null) {
-            haystack.append(e.getMessage()).append('\n');
-        }
         if (api.getMessage() != null) {
             haystack.append(api.getMessage()).append('\n');
         }
@@ -238,26 +238,23 @@ public final class RemoteWebElement implements WebElement {
      * {@code /element/find} ({@code ElementHandleRegistry.put}), so a re-find
      * of an unchanged node would otherwise always look "stale".
      *
+     * <p>Transport / service failures from {@code executeScript} propagate as
+     * {@link BrowsingClientException}; only a successful non-true identity
+     * result is treated as stale.
+     *
      * <p><b>TOCTOU:</b> validation and the subsequent child lookup are separate
      * round-trips. A true atomic bind needs a server-side find relative to
      * {@code element_handle} under the session lock.
      */
     private void requireSourceXpathStillBoundToHandle(BrowsingClient browsingClient) {
         String xpath = requireSourceXpath();
-        final Object sameNode;
-        try {
-            sameNode = browsingClient.executeScript(sessionId,
-                "var orig = arguments[0];"
-                + "var xp = arguments[1];"
-                + "var r = document.evaluate(xp, document, null,"
-                + "  XPathResult.FIRST_ORDERED_NODE_TYPE, null);"
-                + "return orig != null && orig === r.singleNodeValue;",
-                List.of(Map.of("element_handle", elementHandle), xpath));
-        } catch (BrowsingClientException e) {
-            throw new StaleElementReferenceException(
-                "RemoteWebElement source xpath bind check failed for handle="
-                    + elementHandle + " (xpath=" + xpath + ")", e);
-        }
+        Object sameNode = browsingClient.executeScript(sessionId,
+            "var orig = arguments[0];"
+            + "var xp = arguments[1];"
+            + "var r = document.evaluate(xp, document, null,"
+            + "  XPathResult.FIRST_ORDERED_NODE_TYPE, null);"
+            + "return orig != null && orig === r.singleNodeValue;",
+            List.of(Map.of("element_handle", elementHandle), xpath));
         if (!Boolean.TRUE.equals(sameNode)) {
             throw new StaleElementReferenceException(
                 "RemoteWebElement source xpath no longer resolves to the same DOM node as handle="
