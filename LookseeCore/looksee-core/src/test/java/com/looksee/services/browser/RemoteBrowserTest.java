@@ -186,6 +186,20 @@ class RemoteBrowserTest {
     }
 
     @Test
+    void findElements_propagatesUnclassified404() {
+        ElementState first = new ElementState()
+            .elementHandle("f1").found(true).displayed(true).attributes(Map.of());
+        when(client.findElement("session-1", "(//form)[1]")).thenReturn(first);
+        when(client.findElement("session-1", "(//form)[2]"))
+            .thenThrow(new com.looksee.browsing.client.BrowsingClientException(
+                "findElement failed",
+                new com.looksee.browsing.generated.ApiException(404, "Not Found")));
+
+        assertThrows(com.looksee.browsing.client.BrowsingClientException.class,
+            () -> remote.findElements("//form"));
+    }
+
+    @Test
     void getDriver_throwsUnsupported() {
         assertThrows(UnsupportedOperationException.class, () -> remote.getDriver());
     }

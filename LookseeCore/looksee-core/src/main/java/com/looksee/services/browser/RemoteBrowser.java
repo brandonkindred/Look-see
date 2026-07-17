@@ -307,8 +307,9 @@ public class RemoteBrowser extends Browser {
         for (int index = 1; ; index++) {
             String indexedXpath = "(" + xpath + ")[" + index + "]";
             // Current browser-service: HTTP 200 + found=false ends the loop.
-            // Legacy draft servers may 404 on xpath miss; findElementCompat maps
-            // those to found=false while still propagating session_not_found.
+            // Legacy draft servers may 404 with an element-not-found payload;
+            // findElementCompat maps only those to found=false. Session expiry
+            // and unclassified 404s still propagate.
             ElementState state = RemoteWebElement.findElementCompat(
                 client, sessionId, indexedXpath);
             if (!Boolean.TRUE.equals(state.getFound())) {

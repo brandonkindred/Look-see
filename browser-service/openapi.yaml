@@ -828,8 +828,8 @@ components:
           type: [string, "null"]
           description: |
             Opaque handle for use in follow-up calls. Valid for the life of the
-            session. Present and null when `found` is false (xpath matched no node);
-            non-null string when `found` is true.
+            session. Non-null string iff `found` is true; JSON null iff `found`
+            is false.
         found: { type: boolean }
         displayed: { type: boolean }
         attributes:
@@ -837,6 +837,23 @@ components:
           additionalProperties: { type: string }
           description: From engine `Browser.extractAttributes` — flattened `name -> value` map.
         rect: { $ref: "#/components/schemas/Rect" }
+      # found ↔ element_handle pairing (OpenAPI 3.1). Kept as one object so Java
+      # openapi-generator still emits a single ElementState model; validators /
+      # contract tests should apply these rules. Split oneOf variants would break
+      # the generated client shape used throughout Look-see.
+      allOf:
+        - if:
+            properties: { found: { const: true } }
+            required: [found]
+          then:
+            properties:
+              element_handle: { type: string, minLength: 1 }
+        - if:
+            properties: { found: { const: false } }
+            required: [found]
+          then:
+            properties:
+              element_handle: { type: "null" }
 
     ElementActionRequest:
       type: object

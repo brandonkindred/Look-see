@@ -112,7 +112,7 @@ class RemoteWebElementWiredMethodsTest {
         ElementState first = new ElementState()
             .elementHandle("tr-1").found(true).displayed(true).attributes(Map.of());
         when(client.findElement("s1", "((//button)//tr)[1]")).thenReturn(first);
-        // Draft/older servers 404'd on xpath miss without session_not_found.
+        // Draft/older servers 404'd on xpath miss with an element-miss payload.
         when(client.findElement("s1", "((//button)//tr)[2]"))
             .thenThrow(new BrowsingClientException("findElement failed",
                 new ApiException(404, "element not found")));
@@ -121,6 +121,19 @@ class RemoteWebElementWiredMethodsTest {
 
         assertEquals(1, results.size());
         assertEquals("tr-1", ((RemoteWebElement) results.get(0)).getElementHandle());
+    }
+
+    @Test
+    void findElements_propagatesUnclassified404InsteadOfTreatingAsMiss() {
+        ElementState first = new ElementState()
+            .elementHandle("tr-1").found(true).displayed(true).attributes(Map.of());
+        when(client.findElement("s1", "((//button)//tr)[1]")).thenReturn(first);
+        // Generic proxy/outage 404 — must not silently truncate the list.
+        when(client.findElement("s1", "((//button)//tr)[2]"))
+            .thenThrow(new BrowsingClientException("findElement failed",
+                new ApiException(404, "Not Found")));
+
+        assertThrows(BrowsingClientException.class, () -> el.findElements(By.tagName("tr")));
     }
 
     @Test

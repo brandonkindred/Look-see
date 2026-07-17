@@ -169,8 +169,10 @@ public final class RemoteWebElement implements WebElement {
      * Resolves a singular find against browser-service with rolling-deploy
      * compatibility: current servers return HTTP 200 + {@code found:false} for
      * xpath misses and HTTP 404 only for {@code session_not_found}. Older draft
-     * stubs may 404 on a miss; those are mapped to {@code found:false} so N+1
-     * plural probes still terminate. Session-expiry 404s still propagate.
+     * stubs may 404 on a miss with an element-not-found payload; those alone
+     * are mapped to {@code found:false} so N+1 plural probes still terminate.
+     * Session-expiry and unclassified 404s (generic proxy/outage bodies) still
+     * propagate so callers do not treat infrastructure failures as empty matches.
      */
     static ElementState findElementCompat(BrowsingClient browsingClient,
                                           String sessionId,
@@ -186,19 +188,26 @@ public final class RemoteWebElement implements WebElement {
     }
 
     /**
-     * True when a 404 is an xpath miss from an older/draft server rather than
-     * session expiry. Session expiry is identified by {@code session_not_found}
-     * (or the spaced phrase) in the exception message or response body.
+     * True only when a 404 is positively identified as an xpath miss from an
+     * older/draft server. Unclassified 404s and session-expiry 404s return
+     * false so they propagate as service failures.
      */
     static boolean isLegacyElementMiss404(BrowsingClientException e) {
         ApiException api = unwrapApiException(e);
         if (api == null || api.getCode() != 404) {
             return false;
         }
-        return !isSessionNotFound(e, api);
+        String lower = errorHaystack(e, api).toLowerCase(Locale.ROOT);
+        if (lower.contains("session_not_found") || lower.contains("session not found")) {
+            return false;
+        }
+        return lower.contains("element_not_found")
+            || lower.contains("element not found")
+            || lower.contains("no_such_element")
+            || lower.contains("no such element");
     }
 
-    private static boolean isSessionNotFound(BrowsingClientException e, ApiException api) {
+    private static String errorHaystack(BrowsingClientException e, ApiException api) {
         StringBuilder haystack = new StringBuilder();
         if (e.getMessage() != null) {
             haystack.append(e.getMessage()).append('\n');
@@ -209,8 +218,7 @@ public final class RemoteWebElement implements WebElement {
         if (api.getResponseBody() != null) {
             haystack.append(api.getResponseBody());
         }
-        String lower = haystack.toString().toLowerCase(Locale.ROOT);
-        return lower.contains("session_not_found") || lower.contains("session not found");
+        return haystack.toString();
     }
 
     private static ApiException unwrapApiException(BrowsingClientException e) {
@@ -406,9 +414,10 @@ public final class RemoteWebElement implements WebElement {
         // Full Selenium semantics: enumerate until the first miss, no artificial cap.
         for (int index = 1; ; index++) {
             String indexedXpath = "(" + xpath + ")[" + index + "]";
-            // HTTP 200 + found=false ends enumeration. Legacy draft 404s on
-            // xpath miss are mapped to found=false; session_not_found 404s
-            // still propagate (see findElementCompat).
+            // HTTP 200 + found=false ends enumeration. Legacy draft 404s that
+            // positively identify an element miss map to found=false;
+            // session_not_found and unclassified 404s still propagate
+            // (see findElementCompat).
             //
             // Each indexed lookup is a separate round-trip. True single-snapshot
             // enumeration needs a server-side plural find under the session lock.
