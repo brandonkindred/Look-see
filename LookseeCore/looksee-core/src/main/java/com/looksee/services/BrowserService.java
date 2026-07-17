@@ -3094,6 +3094,7 @@ public class BrowserService {
 	 */
 	static String extractTagFromXpath(String xpath) {
 		if (xpath == null || xpath.isEmpty()) return "";
+		xpath = unwrapIndexedXpath(xpath);
 
 		// Scan once tracking bracket depth + quote state. tailStart is the
 		// position just after the last '/' that's outside any [...] predicate
@@ -3125,6 +3126,38 @@ public class BrowserService {
 		// Strip namespace prefix (e.g. "svg:rect" → "rect").
 		int colon = tag.indexOf(':');
 		return colon >= 0 ? tag.substring(colon + 1) : tag;
+	}
+
+	/**
+	 * Removes the parenthesized wrapper RemoteBrowser and uniqifyXpath add to
+	 * indexed multi-match xpaths, for example {@code (//form)[1]}.
+	 */
+	private static String unwrapIndexedXpath(String xpath) {
+		while (xpath.startsWith("(")) {
+			int parenDepth = 0;
+			char quote = 0;
+			int closingParen = -1;
+			for (int i = 0; i < xpath.length(); i++) {
+				char c = xpath.charAt(i);
+				if (quote != 0) {
+					if (c == quote) quote = 0;
+				} else if (c == '\'' || c == '"') {
+					quote = c;
+				} else if (c == '(') {
+					parenDepth++;
+				} else if (c == ')' && --parenDepth == 0) {
+					closingParen = i;
+					break;
+				}
+			}
+
+			if (closingParen < 0
+					|| !xpath.substring(closingParen + 1).matches("(\\[\\d+\\])*")) {
+				break;
+			}
+			xpath = xpath.substring(1, closingParen);
+		}
+		return xpath;
 	}
 
 	/**

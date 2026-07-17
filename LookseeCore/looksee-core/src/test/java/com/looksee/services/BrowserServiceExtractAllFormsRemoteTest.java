@@ -50,7 +50,7 @@ class BrowserServiceExtractAllFormsRemoteTest {
                 "innerHTML", "<input name=\"email\">",
                 "outerHTML", "<form id=\"contact-form\"><input name=\"email\"></form>"))
             .rect(new Rect().x(10).y(20).width(100).height(50));
-        RemoteWebElement form = new RemoteWebElement("session-1", "//form[1]", state, client);
+        RemoteWebElement form = new RemoteWebElement("session-1", "(//form)[1]", state, client);
         BrowserService browserService = new BrowserService();
         ReflectionTestUtils.setField(browserService, "element_service", elementService);
 
