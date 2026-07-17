@@ -156,6 +156,18 @@ class RemoteBrowserTest {
     }
 
     @Test
+    void findElement_keepsOriginalXpathWhenSecondProbeReturnsNull() {
+        ElementState only = new ElementState()
+            .elementHandle("f1").found(true).displayed(true).attributes(Map.of());
+        when(client.findElement("session-1", "//button")).thenReturn(only);
+        // Unstubbed [2] probe returns null from Mockito — must not NPE.
+
+        RemoteWebElement el = (RemoteWebElement) remote.findElement("//button");
+
+        assertEquals("//button", el.getSourceXpath());
+    }
+
+    @Test
     void getDriver_throwsUnsupported() {
         assertThrows(UnsupportedOperationException.class, () -> remote.getDriver());
     }

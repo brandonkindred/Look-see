@@ -311,7 +311,8 @@ public class RemoteBrowser extends Browser {
         }
         try {
             ElementState second = client.findElement(sessionId, "(" + xpath + ")[2]");
-            if (Boolean.TRUE.equals(second.getFound())) {
+            // Treat null / not-found the same: xpath is already unique enough.
+            if (second != null && Boolean.TRUE.equals(second.getFound())) {
                 return "(" + xpath + ")[1]";
             }
         } catch (BrowsingClientException exception) {
