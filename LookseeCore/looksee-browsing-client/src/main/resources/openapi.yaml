@@ -275,12 +275,15 @@ paths:
             schema: { $ref: "#/components/schemas/FindElementRequest" }
       responses:
         "200":
-          description: Element state
+          description: |
+            Element state. When the xpath matches no node, the response is still
+            HTTP 200 with `found: false` (and a null `element_handle`) — missing
+            elements are not signaled via 404.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ElementState" }
         "404":
-          description: Session or element not found
+          description: Session not found
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
