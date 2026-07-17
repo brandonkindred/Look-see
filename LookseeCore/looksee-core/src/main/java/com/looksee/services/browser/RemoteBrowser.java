@@ -289,10 +289,37 @@ public class RemoteBrowser extends Browser {
             throw new NoSuchElementException(
                 "RemoteBrowser: element not found for xpath=" + xpath);
         }
+        // Nested RemoteWebElement.findElement(s) compose relative locators onto
+        // this source xpath. If the original xpath matches multiple nodes,
+        // store an indexed unique xpath so descendants stay scoped to the
+        // resolved element (Selenium nested-find semantics).
+        String sourceXpath = uniquifySourceXpath(xpath);
         // Pass the BrowsingClient through so the returned element can route
         // its own WebElement-API calls (phase 3f) without needing this
         // RemoteBrowser as a parent reference.
-        return new RemoteWebElement(sessionId, xpath, state, client);
+        return new RemoteWebElement(sessionId, sourceXpath, state, client);
+    }
+
+    /**
+     * When {@code xpath} is not already indexed and a second match exists,
+     * return {@code (xpath)[1]} so nested composition cannot escape into
+     * siblings that also match the original non-unique locator.
+     */
+    private String uniquifySourceXpath(String xpath) {
+        if (xpath == null || xpath.isEmpty() || xpath.matches(".*\\)\\[\\d+\\]\\s*$")) {
+            return xpath;
+        }
+        try {
+            ElementState second = client.findElement(sessionId, "(" + xpath + ")[2]");
+            if (Boolean.TRUE.equals(second.getFound())) {
+                return "(" + xpath + ")[1]";
+            }
+        } catch (BrowsingClientException exception) {
+            if (!isNotFound(exception)) {
+                throw exception;
+            }
+        }
+        return xpath;
     }
 
     @Override

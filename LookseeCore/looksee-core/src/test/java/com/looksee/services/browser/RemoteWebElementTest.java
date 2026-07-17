@@ -1,7 +1,8 @@
 package com.looksee.services.browser;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.mock;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 import com.looksee.browsing.client.BrowsingClient;
 import com.looksee.browsing.generated.model.ElementState;
@@ -67,7 +68,30 @@ class RemoteWebElementTest {
             state("h1", true, Map.of("id", "submit", "class", "btn primary"), null));
         assertEquals("submit", el.getAttribute("id"));
         assertEquals("btn primary", el.getAttribute("class"));
+        // No client → missing keys stay null (no executeScript fallback).
         assertNull(el.getAttribute("missing"));
+    }
+
+    @Test
+    void getAttribute_fetchesDomPropertiesViaExecuteScriptWhenMissingFromCache() {
+        BrowsingClient client = mock(BrowsingClient.class);
+        RemoteWebElement el = new RemoteWebElement(
+            "s1", "//form", state("h1", true, Map.of("id", "contact"), null), client);
+        when(client.executeScript(eq("s1"), anyString(), any())).thenAnswer(invocation -> {
+            java.util.List<?> args = invocation.getArgument(2);
+            String name = args.get(1).toString();
+            if ("innerHTML".equals(name)) return "<input>";
+            if ("outerHTML".equals(name)) return "<form id=\"contact\"><input></form>";
+            return null;
+        });
+
+        assertEquals("<input>", el.getAttribute("innerHTML"));
+        assertEquals("<form id=\"contact\"><input></form>", el.getAttribute("outerHTML"));
+
+        clearInvocations(client);
+        // Cached HTML attribute still served without a round-trip.
+        assertEquals("contact", el.getAttribute("id"));
+        verify(client, never()).executeScript(any(), any(), any());
     }
 
     @Test

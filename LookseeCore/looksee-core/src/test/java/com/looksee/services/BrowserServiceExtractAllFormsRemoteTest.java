@@ -2,6 +2,7 @@ package com.looksee.services;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -41,14 +42,13 @@ class BrowserServiceExtractAllFormsRemoteTest {
         Domain domain = mock(Domain.class);
         BrowsingClient client = mock(BrowsingClient.class);
         ElementService elementService = mock(ElementService.class);
+        // Attributes map mirrors browser-service extractAttributes — HTML attrs only.
+        // innerHTML/outerHTML must come from RemoteWebElement.getAttribute → executeScript.
         ElementState state = new ElementState()
             .elementHandle("form-1")
             .found(true)
             .displayed(true)
-            .attributes(Map.of(
-                "id", "contact-form",
-                "innerHTML", "<input name=\"email\">",
-                "outerHTML", "<form id=\"contact-form\"><input name=\"email\"></form>"))
+            .attributes(Map.of("id", "contact-form"))
             .rect(new Rect().x(10).y(20).width(100).height(50));
         RemoteWebElement form = new RemoteWebElement("session-1", "(//form)[1]", state, client);
         BrowserService browserService = new BrowserService();
@@ -57,11 +57,22 @@ class BrowserServiceExtractAllFormsRemoteTest {
         when(browser.getCurrentUrl()).thenReturn("https://example.com/form");
         when(browser.findElements("//form")).thenReturn(List.of(form));
         when(browser.extractAttributes(form)).thenReturn(Map.of("id", "contact-form"));
-        when(client.executeScript(any(), any(), any())).thenReturn("Contact us");
+        when(client.executeScript(any(), any(), any())).thenAnswer(invocation -> {
+            java.util.List<?> args = invocation.getArgument(2);
+            if (args != null && args.size() >= 2 && "innerHTML".equals(String.valueOf(args.get(1)))) {
+                return "<input name=\"email\">";
+            }
+            if (args != null && args.size() >= 2 && "outerHTML".equals(String.valueOf(args.get(1)))) {
+                return "<form id=\"contact-form\"><input name=\"email\"></form>";
+            }
+            // getText path
+            return "Contact us";
+        });
         when(elementService.saveFormElement(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         assertNotNull(browserService.extractAllForms(1L, domain, browser));
 
         verify(browser, never()).getDriver();
+        verify(client, atLeastOnce()).executeScript(any(), any(), any());
     }
 }

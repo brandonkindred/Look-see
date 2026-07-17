@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import com.looksee.browsing.client.BrowsingClient;
+import com.looksee.browsing.generated.model.ElementState;
 import com.looksee.browsing.generated.model.PageStatus;
 import com.looksee.browsing.generated.model.ScreenshotStrategy;
 import com.looksee.browsing.generated.model.ScrollOffset;
@@ -13,6 +14,7 @@ import com.looksee.browsing.generated.model.Viewport;
 import com.looksee.browsing.generated.model.ViewportState;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
+import java.util.Map;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -123,6 +125,35 @@ class RemoteBrowserTest {
 
     // --- The only remaining intentional throw in RemoteBrowser is getDriver.
     // Every other op is wired in phase 3b — see RemoteBrowserElementOpsTest.
+
+    @Test
+    void findElement_indexesSourceXpathWhenMultipleMatchesExist() {
+        ElementState first = new ElementState()
+            .elementHandle("f1").found(true).displayed(true).attributes(Map.of());
+        ElementState second = new ElementState()
+            .elementHandle("f2").found(true).displayed(true).attributes(Map.of());
+        when(client.findElement("session-1", "//form")).thenReturn(first);
+        when(client.findElement("session-1", "(//form)[2]")).thenReturn(second);
+
+        RemoteWebElement el = (RemoteWebElement) remote.findElement("//form");
+
+        assertEquals("(//form)[1]", el.getSourceXpath());
+        verify(client).findElement("session-1", "//form");
+        verify(client).findElement("session-1", "(//form)[2]");
+    }
+
+    @Test
+    void findElement_keepsOriginalXpathWhenUnique() {
+        ElementState only = new ElementState()
+            .elementHandle("f1").found(true).displayed(true).attributes(Map.of());
+        when(client.findElement("session-1", "//form[@id='x']")).thenReturn(only);
+        when(client.findElement("session-1", "(//form[@id='x'])[2]"))
+            .thenReturn(new ElementState().found(false));
+
+        RemoteWebElement el = (RemoteWebElement) remote.findElement("//form[@id='x']");
+
+        assertEquals("//form[@id='x']", el.getSourceXpath());
+    }
 
     @Test
     void getDriver_throwsUnsupported() {

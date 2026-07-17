@@ -175,7 +175,26 @@ public final class RemoteWebElement implements WebElement {
     }
 
     @Override public String getAttribute(String name) {
-        return attributes.get(name);
+        if (attributes.containsKey(name)) {
+            return attributes.get(name);
+        }
+        // extractAttributes only returns HTML attributes — DOM properties such
+        // as innerHTML / outerHTML are absent from the findElement cache.
+        // Fall back to executeScript so remote callers match Selenium's
+        // getAttribute property/attribute resolution.
+        if (client == null || name == null) {
+            return null;
+        }
+        Object result = requireClient("getAttribute").executeScript(sessionId,
+            "var el = arguments[0], n = arguments[1];"
+            + "if (n === 'innerHTML') return el.innerHTML;"
+            + "if (n === 'outerHTML') return el.outerHTML;"
+            + "var attr = el.getAttribute(n);"
+            + "if (attr !== null) return attr;"
+            + "var prop = el[n];"
+            + "return prop == null ? null : String(prop);",
+            List.of(Map.of("element_handle", elementHandle), name));
+        return result == null ? null : result.toString();
     }
 
     // --- Unsupported (phase 3c) ------------------------------------------
