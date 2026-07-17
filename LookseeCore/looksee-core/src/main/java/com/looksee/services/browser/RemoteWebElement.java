@@ -1,12 +1,15 @@
 package com.looksee.services.browser;
 
 import com.looksee.browsing.client.BrowsingClient;
+import com.looksee.browsing.client.BrowsingClientException;
+import com.looksee.browsing.generated.ApiException;
 import com.looksee.browsing.generated.model.ElementAction;
 import com.looksee.browsing.generated.model.ElementState;
 import com.looksee.browsing.generated.model.Rect;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import org.openqa.selenium.By;
@@ -163,6 +166,59 @@ public final class RemoteWebElement implements WebElement {
     }
 
     /**
+     * Resolves a singular find against browser-service with rolling-deploy
+     * compatibility: current servers return HTTP 200 + {@code found:false} for
+     * xpath misses and HTTP 404 only for {@code session_not_found}. Older draft
+     * stubs may 404 on a miss; those are mapped to {@code found:false} so N+1
+     * plural probes still terminate. Session-expiry 404s still propagate.
+     */
+    static ElementState findElementCompat(BrowsingClient browsingClient,
+                                          String sessionId,
+                                          String xpath) {
+        try {
+            return browsingClient.findElement(sessionId, xpath);
+        } catch (BrowsingClientException e) {
+            if (isLegacyElementMiss404(e)) {
+                return new ElementState().found(false);
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * True when a 404 is an xpath miss from an older/draft server rather than
+     * session expiry. Session expiry is identified by {@code session_not_found}
+     * (or the spaced phrase) in the exception message or response body.
+     */
+    static boolean isLegacyElementMiss404(BrowsingClientException e) {
+        ApiException api = unwrapApiException(e);
+        if (api == null || api.getCode() != 404) {
+            return false;
+        }
+        return !isSessionNotFound(e, api);
+    }
+
+    private static boolean isSessionNotFound(BrowsingClientException e, ApiException api) {
+        StringBuilder haystack = new StringBuilder();
+        if (e.getMessage() != null) {
+            haystack.append(e.getMessage()).append('\n');
+        }
+        if (api.getMessage() != null) {
+            haystack.append(api.getMessage()).append('\n');
+        }
+        if (api.getResponseBody() != null) {
+            haystack.append(api.getResponseBody());
+        }
+        String lower = haystack.toString().toLowerCase(Locale.ROOT);
+        return lower.contains("session_not_found") || lower.contains("session not found");
+    }
+
+    private static ApiException unwrapApiException(BrowsingClientException e) {
+        Throwable cause = e.getCause();
+        return cause instanceof ApiException ? (ApiException) cause : null;
+    }
+
+    /**
      * Re-resolves {@link #sourceXpath} and confirms it still identifies this
      * element's handle before composing a nested lookup. browser-service has no
      * handle-scoped find, so xpath composition is the only nested path; this
@@ -174,7 +230,7 @@ public final class RemoteWebElement implements WebElement {
      */
     private void requireSourceXpathStillBoundToHandle(BrowsingClient browsingClient) {
         String xpath = requireSourceXpath();
-        ElementState current = browsingClient.findElement(sessionId, xpath);
+        ElementState current = findElementCompat(browsingClient, sessionId, xpath);
         if (isNotFound(current) || !elementHandle.equals(current.getElementHandle())) {
             throw new StaleElementReferenceException(
                 "RemoteWebElement source xpath no longer resolves to handle="
@@ -350,12 +406,13 @@ public final class RemoteWebElement implements WebElement {
         // Full Selenium semantics: enumerate until the first miss, no artificial cap.
         for (int index = 1; ; index++) {
             String indexedXpath = "(" + xpath + ")[" + index + "]";
-            // HTTP 200 + found=false ends enumeration; HTTP 404 (session gone)
-            // must not be treated as an empty remainder.
+            // HTTP 200 + found=false ends enumeration. Legacy draft 404s on
+            // xpath miss are mapped to found=false; session_not_found 404s
+            // still propagate (see findElementCompat).
             //
             // Each indexed lookup is a separate round-trip. True single-snapshot
             // enumeration needs a server-side plural find under the session lock.
-            ElementState state = browsingClient.findElement(sessionId, indexedXpath);
+            ElementState state = findElementCompat(browsingClient, sessionId, indexedXpath);
             if (isNotFound(state)) {
                 return matches;
             }
@@ -371,7 +428,7 @@ public final class RemoteWebElement implements WebElement {
         // Index in the same request that produces the handle so nested
         // composition stays scoped to this child, not every matching sibling.
         String childSourceXpath = toIndexedSourceXpath(composed);
-        ElementState state = browsingClient.findElement(sessionId, childSourceXpath);
+        ElementState state = findElementCompat(browsingClient, sessionId, childSourceXpath);
         if (isNotFound(state)) {
             throw new NoSuchElementException("No nested element found for xpath: " + childSourceXpath);
         }

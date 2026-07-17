@@ -287,7 +287,7 @@ public class RemoteBrowser extends Browser {
         // Nested finds then compose against that concrete node rather than
         // every sibling that matched the original non-unique xpath.
         String sourceXpath = RemoteWebElement.toIndexedSourceXpath(xpath);
-        ElementState state = client.findElement(sessionId, sourceXpath);
+        ElementState state = RemoteWebElement.findElementCompat(client, sessionId, sourceXpath);
         if (!Boolean.TRUE.equals(state.getFound())) {
             throw new NoSuchElementException(
                 "RemoteBrowser: element not found for xpath=" + xpath);
@@ -306,9 +306,11 @@ public class RemoteBrowser extends Browser {
         // plural snapshot still needs a server-side findElements under the lock.
         for (int index = 1; ; index++) {
             String indexedXpath = "(" + xpath + ")[" + index + "]";
-            // browser-service returns HTTP 200 + found=false for missing
-            // elements; HTTP 404 means session expiry and must propagate.
-            ElementState state = client.findElement(sessionId, indexedXpath);
+            // Current browser-service: HTTP 200 + found=false ends the loop.
+            // Legacy draft servers may 404 on xpath miss; findElementCompat maps
+            // those to found=false while still propagating session_not_found.
+            ElementState state = RemoteWebElement.findElementCompat(
+                client, sessionId, indexedXpath);
             if (!Boolean.TRUE.equals(state.getFound())) {
                 return matches;
             }

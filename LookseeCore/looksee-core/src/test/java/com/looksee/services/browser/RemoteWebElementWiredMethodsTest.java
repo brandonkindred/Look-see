@@ -98,12 +98,29 @@ class RemoteWebElementWiredMethodsTest {
         when(client.findElement("s1", "((//button)//tr)[1]")).thenReturn(first);
         when(client.findElement("s1", "((//button)//tr)[2]"))
             .thenThrow(new BrowsingClientException("findElement failed",
-                new ApiException(404, "session not found")));
+                new ApiException(404, "Not Found", null,
+                    "{\"error\":{\"code\":\"session_not_found\",\"message\":\"gone\"}}")));
 
         BrowsingClientException ex = assertThrows(BrowsingClientException.class,
             () -> el.findElements(By.tagName("tr")));
         assertTrue(ex.getCause() instanceof ApiException);
         assertEquals(404, ((ApiException) ex.getCause()).getCode());
+    }
+
+    @Test
+    void findElements_treatsLegacyElementMiss404AsEndOfEnumeration() {
+        ElementState first = new ElementState()
+            .elementHandle("tr-1").found(true).displayed(true).attributes(Map.of());
+        when(client.findElement("s1", "((//button)//tr)[1]")).thenReturn(first);
+        // Draft/older servers 404'd on xpath miss without session_not_found.
+        when(client.findElement("s1", "((//button)//tr)[2]"))
+            .thenThrow(new BrowsingClientException("findElement failed",
+                new ApiException(404, "element not found")));
+
+        List<WebElement> results = el.findElements(By.tagName("tr"));
+
+        assertEquals(1, results.size());
+        assertEquals("tr-1", ((RemoteWebElement) results.get(0)).getElementHandle());
     }
 
     @Test

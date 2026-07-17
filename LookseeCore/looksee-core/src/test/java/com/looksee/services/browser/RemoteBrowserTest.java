@@ -154,6 +154,38 @@ class RemoteBrowserTest {
     }
 
     @Test
+    void findElements_treatsLegacyElementMiss404AsEndOfEnumeration() {
+        ElementState first = new ElementState()
+            .elementHandle("f1").found(true).displayed(true).attributes(Map.of());
+        when(client.findElement("session-1", "(//form)[1]")).thenReturn(first);
+        when(client.findElement("session-1", "(//form)[2]"))
+            .thenThrow(new com.looksee.browsing.client.BrowsingClientException(
+                "findElement failed",
+                new com.looksee.browsing.generated.ApiException(404, "element not found")));
+
+        java.util.List<org.openqa.selenium.WebElement> matches = remote.findElements("//form");
+
+        assertEquals(1, matches.size());
+        assertEquals("(//form)[1]", ((RemoteWebElement) matches.get(0)).getSourceXpath());
+    }
+
+    @Test
+    void findElements_propagatesSessionNotFound404() {
+        ElementState first = new ElementState()
+            .elementHandle("f1").found(true).displayed(true).attributes(Map.of());
+        when(client.findElement("session-1", "(//form)[1]")).thenReturn(first);
+        when(client.findElement("session-1", "(//form)[2]"))
+            .thenThrow(new com.looksee.browsing.client.BrowsingClientException(
+                "findElement failed",
+                new com.looksee.browsing.generated.ApiException(
+                    404, "Not Found", null,
+                    "{\"error\":{\"code\":\"session_not_found\"}}")));
+
+        assertThrows(com.looksee.browsing.client.BrowsingClientException.class,
+            () -> remote.findElements("//form"));
+    }
+
+    @Test
     void getDriver_throwsUnsupported() {
         assertThrows(UnsupportedOperationException.class, () -> remote.getDriver());
     }
