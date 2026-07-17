@@ -204,7 +204,9 @@ class RemoteWebElementTest {
         RemoteWebElement el = new RemoteWebElement("s1", "//form", parent, client);
         ElementState child = new ElementState()
             .elementHandle("h2").found(true).displayed(true).attributes(Map.of());
-        when(client.findElement("s1", "//form")).thenReturn(parent);
+        when(client.executeScript(eq("s1"), argThat(script ->
+                script != null && script.contains("document.evaluate")), any()))
+            .thenReturn(Boolean.TRUE);
         when(client.findElement("s1", "((//form)//input)[1]")).thenReturn(child);
 
         RemoteWebElement result = (RemoteWebElement) el.findElement(By.tagName("input"));

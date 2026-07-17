@@ -227,10 +227,16 @@ public final class RemoteWebElement implements WebElement {
     }
 
     /**
-     * Re-resolves {@link #sourceXpath} and confirms it still identifies this
-     * element's handle before composing a nested lookup. browser-service has no
-     * handle-scoped find, so xpath composition is the only nested path; this
-     * check fails closed when the DOM has shifted the locator onto a different node.
+     * Confirms this element's handle still refers to the same DOM node that
+     * {@link #sourceXpath} currently selects, before composing a nested lookup.
+     * browser-service has no handle-scoped find, so xpath composition is the
+     * only nested path; this check fails closed when the locator has drifted.
+     *
+     * <p>Identity is checked via {@code executeScript} ({@code ===} between the
+     * stored handle and {@code document.evaluate}), not by comparing opaque
+     * handle strings: live browser-service allocates a new handle on every
+     * {@code /element/find} ({@code ElementHandleRegistry.put}), so a re-find
+     * of an unchanged node would otherwise always look "stale".
      *
      * <p><b>TOCTOU:</b> validation and the subsequent child lookup are separate
      * round-trips. A true atomic bind needs a server-side find relative to
@@ -238,10 +244,23 @@ public final class RemoteWebElement implements WebElement {
      */
     private void requireSourceXpathStillBoundToHandle(BrowsingClient browsingClient) {
         String xpath = requireSourceXpath();
-        ElementState current = findElementCompat(browsingClient, sessionId, xpath);
-        if (isNotFound(current) || !elementHandle.equals(current.getElementHandle())) {
+        final Object sameNode;
+        try {
+            sameNode = browsingClient.executeScript(sessionId,
+                "var orig = arguments[0];"
+                + "var xp = arguments[1];"
+                + "var r = document.evaluate(xp, document, null,"
+                + "  XPathResult.FIRST_ORDERED_NODE_TYPE, null);"
+                + "return orig != null && orig === r.singleNodeValue;",
+                List.of(Map.of("element_handle", elementHandle), xpath));
+        } catch (BrowsingClientException e) {
             throw new StaleElementReferenceException(
-                "RemoteWebElement source xpath no longer resolves to handle="
+                "RemoteWebElement source xpath bind check failed for handle="
+                    + elementHandle + " (xpath=" + xpath + ")", e);
+        }
+        if (!Boolean.TRUE.equals(sameNode)) {
+            throw new StaleElementReferenceException(
+                "RemoteWebElement source xpath no longer resolves to the same DOM node as handle="
                     + elementHandle + " (xpath=" + xpath + ")");
         }
     }

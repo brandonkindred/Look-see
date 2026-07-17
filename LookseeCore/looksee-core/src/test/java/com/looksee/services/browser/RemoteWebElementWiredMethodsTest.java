@@ -35,8 +35,10 @@ class RemoteWebElementWiredMethodsTest {
         ElementState s = new ElementState()
             .elementHandle("h1").found(true).displayed(true).attributes(Map.of());
         el = new RemoteWebElement("s1", "//button", s, client);
-        // Nested finds re-resolve the parent source xpath first.
-        when(client.findElement("s1", "//button")).thenReturn(s);
+        // Nested finds confirm parent DOM identity via executeScript (not handle equality).
+        when(client.executeScript(eq("s1"), argThat(script ->
+                script != null && script.contains("document.evaluate")), any()))
+            .thenReturn(Boolean.TRUE);
     }
 
     // --- nested findElement(s) → /element/find ----------------------------
@@ -51,7 +53,8 @@ class RemoteWebElementWiredMethodsTest {
 
         assertEquals("h2", result.getElementHandle());
         assertEquals("((//button)/input)[1]", result.getSourceXpath());
-        verify(client).findElement("s1", "//button");
+        verify(client).executeScript(eq("s1"), argThat(script ->
+                script != null && script.contains("document.evaluate")), any());
         verify(client).findElement("s1", "((//button)/input)[1]");
     }
 
@@ -82,9 +85,9 @@ class RemoteWebElementWiredMethodsTest {
 
     @Test
     void findElement_throwsStaleWhenParentSourceXpathDrifted() {
-        when(client.findElement("s1", "//button"))
-            .thenReturn(new ElementState()
-                .elementHandle("other-form").found(true).displayed(true).attributes(Map.of()));
+        when(client.executeScript(eq("s1"), argThat(script ->
+                script != null && script.contains("document.evaluate")), any()))
+            .thenReturn(Boolean.FALSE);
 
         assertThrows(org.openqa.selenium.StaleElementReferenceException.class,
             () -> el.findElement(By.xpath("./input")));
@@ -238,10 +241,10 @@ class RemoteWebElementWiredMethodsTest {
         when(client.findElement("s1", "((//button)//tr)[1]"))
             .thenReturn(new ElementState().found(false));
         // Pre-loop bind check succeeds; post-miss recheck sees the parent gone.
-        when(client.findElement("s1", "//button"))
-            .thenReturn(new ElementState()
-                .elementHandle("h1").found(true).displayed(true).attributes(Map.of()))
-            .thenReturn(new ElementState().found(false));
+        when(client.executeScript(eq("s1"), argThat(script ->
+                script != null && script.contains("document.evaluate")), any()))
+            .thenReturn(Boolean.TRUE)
+            .thenReturn(Boolean.FALSE);
 
         assertThrows(org.openqa.selenium.StaleElementReferenceException.class,
             () -> el.findElements(By.tagName("tr")));
@@ -251,10 +254,10 @@ class RemoteWebElementWiredMethodsTest {
     void findElement_throwsStaleWhenParentUnboundOnChildMiss() {
         when(client.findElement("s1", "((//button)/input)[1]"))
             .thenReturn(new ElementState().found(false));
-        when(client.findElement("s1", "//button"))
-            .thenReturn(new ElementState()
-                .elementHandle("h1").found(true).displayed(true).attributes(Map.of()))
-            .thenReturn(new ElementState().found(false));
+        when(client.executeScript(eq("s1"), argThat(script ->
+                script != null && script.contains("document.evaluate")), any()))
+            .thenReturn(Boolean.TRUE)
+            .thenReturn(Boolean.FALSE);
 
         assertThrows(org.openqa.selenium.StaleElementReferenceException.class,
             () -> el.findElement(By.xpath("./input")));

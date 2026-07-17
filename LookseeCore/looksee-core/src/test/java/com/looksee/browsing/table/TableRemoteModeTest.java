@@ -42,7 +42,9 @@ class TableRemoteModeTest {
             .found(true)
             .displayed(true)
             .attributes(Map.of());
-        when(client.findElement("s1", "//table/thead")).thenReturn(thead);
+        when(client.executeScript(eq("s1"), argThat(script ->
+                script != null && script.contains("document.evaluate")), any()))
+            .thenReturn(Boolean.TRUE);
         when(client.findElement("s1", "((//table/thead)/tr)[1]")).thenReturn(firstRow);
         when(client.findElement("s1", "((//table/thead)/tr)[2]")).thenReturn(secondRow);
         when(client.findElement("s1", "((//table/thead)/tr)[3]"))
@@ -74,7 +76,9 @@ class TableRemoteModeTest {
             "//table/thead",
             thead,
             client);
-        when(client.findElement("s1", "//table/thead")).thenReturn(thead);
+        when(client.executeScript(eq("s1"), argThat(script ->
+                script != null && script.contains("document.evaluate")), any()))
+            .thenReturn(Boolean.TRUE);
         when(client.findElement(eq("s1"), startsWith("((//table/thead)/tr)")))
             .thenReturn(new ElementState().found(false));
 
