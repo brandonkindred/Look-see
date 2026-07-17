@@ -399,8 +399,14 @@ public final class RemoteWebElement implements WebElement {
 
     @Override
     public String getText() {
+        // WebDriver getText returns rendered visible text, not raw textContent
+        // (which includes script/style/hidden descendants). innerText is the
+        // closest DOM property; fall back when unavailable (e.g. some SVG).
         Object r = requireClient("getText").executeScript(sessionId,
-            "return arguments[0].textContent;",
+            "var el = arguments[0];"
+            + "var t = el.innerText;"
+            + "if (t == null || t === undefined) t = el.textContent;"
+            + "return t == null ? '' : String(t);",
             List.of(Map.of("element_handle", elementHandle)));
         return r == null ? "" : r.toString();
     }
@@ -423,6 +429,9 @@ public final class RemoteWebElement implements WebElement {
             // enumeration needs a server-side plural find under the session lock.
             ElementState state = findElementCompat(browsingClient, sessionId, indexedXpath);
             if (isNotFound(state)) {
+                // Parent may have been removed/replaced after the pre-loop check.
+                // Prefer stale over claiming an empty remainder (Selenium semantics).
+                requireSourceXpathStillBoundToHandle(browsingClient);
                 return matches;
             }
             matches.add(new RemoteWebElement(sessionId, indexedXpath, state, browsingClient));
@@ -439,6 +448,7 @@ public final class RemoteWebElement implements WebElement {
         String childSourceXpath = toIndexedSourceXpath(composed);
         ElementState state = findElementCompat(browsingClient, sessionId, childSourceXpath);
         if (isNotFound(state)) {
+            requireSourceXpathStillBoundToHandle(browsingClient);
             throw new NoSuchElementException("No nested element found for xpath: " + childSourceXpath);
         }
         return new RemoteWebElement(sessionId, childSourceXpath, state, client);

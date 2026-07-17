@@ -217,15 +217,47 @@ class RemoteWebElementWiredMethodsTest {
     // --- DOM property reads → /execute ------------------------------------
 
     @Test
-    void getText_returnsTextContent() {
-        when(client.executeScript(eq("s1"), any(), any())).thenReturn("Hello, world");
+    void getText_usesInnerTextForRenderedVisibleText() {
+        ArgumentCaptor<String> scriptCap = ArgumentCaptor.forClass(String.class);
+        when(client.executeScript(eq("s1"), scriptCap.capture(), any())).thenReturn("Hello, world");
+
         assertEquals("Hello, world", el.getText());
+        assertTrue(scriptCap.getValue().contains("innerText"),
+            "getText should prefer innerText (WebDriver rendered-text semantics): "
+                + scriptCap.getValue());
     }
 
     @Test
     void getText_returnsEmptyStringOnNullResult() {
         when(client.executeScript(eq("s1"), any(), any())).thenReturn(null);
         assertEquals("", el.getText());
+    }
+
+    @Test
+    void findElements_throwsStaleWhenParentUnboundOnTerminalMiss() {
+        when(client.findElement("s1", "((//button)//tr)[1]"))
+            .thenReturn(new ElementState().found(false));
+        // Pre-loop bind check succeeds; post-miss recheck sees the parent gone.
+        when(client.findElement("s1", "//button"))
+            .thenReturn(new ElementState()
+                .elementHandle("h1").found(true).displayed(true).attributes(Map.of()))
+            .thenReturn(new ElementState().found(false));
+
+        assertThrows(org.openqa.selenium.StaleElementReferenceException.class,
+            () -> el.findElements(By.tagName("tr")));
+    }
+
+    @Test
+    void findElement_throwsStaleWhenParentUnboundOnChildMiss() {
+        when(client.findElement("s1", "((//button)/input)[1]"))
+            .thenReturn(new ElementState().found(false));
+        when(client.findElement("s1", "//button"))
+            .thenReturn(new ElementState()
+                .elementHandle("h1").found(true).displayed(true).attributes(Map.of()))
+            .thenReturn(new ElementState().found(false));
+
+        assertThrows(org.openqa.selenium.StaleElementReferenceException.class,
+            () -> el.findElement(By.xpath("./input")));
     }
 
     @Test
