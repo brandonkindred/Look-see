@@ -5,6 +5,8 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.looksee.browsing.client.BrowsingClient;
+import com.looksee.browsing.client.BrowsingClientException;
+import com.looksee.browsing.generated.ApiException;
 import com.looksee.browsing.generated.model.ElementAction;
 import com.looksee.browsing.generated.model.ElementState;
 import java.util.List;
@@ -12,13 +14,15 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.openqa.selenium.By;
+import org.openqa.selenium.NoSuchElementException;
 import org.openqa.selenium.OutputType;
+import org.openqa.selenium.WebElement;
 
 /**
- * Phase 3f: every previously-deferred WebElement method on RemoteWebElement
- * (except the two findElement(s)(By) overloads) now routes through the
- * BrowsingClient facade. These tests verify the routing — script content,
- * enum translation, output-type handling, etc.
+ * RemoteWebElement methods that use the BrowsingClient facade. These tests
+ * verify client routing — nested xpath lookup, script content, enum
+ * translation, output-type handling, etc.
  */
 class RemoteWebElementWiredMethodsTest {
 
@@ -31,6 +35,61 @@ class RemoteWebElementWiredMethodsTest {
         ElementState s = new ElementState()
             .elementHandle("h1").found(true).displayed(true).attributes(Map.of());
         el = new RemoteWebElement("s1", "//button", s, client);
+    }
+
+    // --- nested findElement(s) → /element/find ----------------------------
+
+    @Test
+    void findElement_composesRelativeXpathAndReturnsWiredChild() {
+        ElementState child = new ElementState()
+            .elementHandle("h2").found(true).displayed(true).attributes(Map.of("id", "name"));
+        when(client.findElement("s1", "//button/input")).thenReturn(child);
+
+        RemoteWebElement result = (RemoteWebElement) el.findElement(By.xpath("./input"));
+
+        assertEquals("h2", result.getElementHandle());
+        assertEquals("//button/input", result.getSourceXpath());
+        verify(client).findElement("s1", "//button/input");
+    }
+
+    @Test
+    void findElements_enumeratesIndexedXpathsUntilNoMatch() {
+        ElementState first = new ElementState()
+            .elementHandle("tr-1").found(true).displayed(true).attributes(Map.of());
+        ElementState second = new ElementState()
+            .elementHandle("tr-2").found(true).displayed(true).attributes(Map.of());
+        when(client.findElement("s1", "(//button//tr)[1]")).thenReturn(first);
+        when(client.findElement("s1", "(//button//tr)[2]")).thenReturn(second);
+        when(client.findElement("s1", "(//button//tr)[3]")).thenReturn(new ElementState().found(false));
+
+        List<WebElement> results = el.findElements(By.tagName("tr"));
+
+        assertEquals(2, results.size());
+        assertEquals("(//button//tr)[1]", ((RemoteWebElement) results.get(0)).getSourceXpath());
+        assertEquals("(//button//tr)[2]", ((RemoteWebElement) results.get(1)).getSourceXpath());
+        verify(client).findElement("s1", "(//button//tr)[3]");
+    }
+
+    @Test
+    void findElement_throwsNoSuchElementWhenResponseIsNotFound() {
+        when(client.findElement("s1", "//button/input")).thenReturn(new ElementState().found(false));
+
+        assertThrows(NoSuchElementException.class, () -> el.findElement(By.xpath("./input")));
+    }
+
+    @Test
+    void findElements_stopsWhenIndexedLookupReturnsNotFoundResponse() {
+        ElementState first = new ElementState()
+            .elementHandle("tr-1").found(true).displayed(true).attributes(Map.of());
+        when(client.findElement("s1", "(//button//tr)[1]")).thenReturn(first);
+        when(client.findElement("s1", "(//button//tr)[2]"))
+            .thenThrow(new BrowsingClientException("findElement failed",
+                new ApiException(404, "not found")));
+
+        List<WebElement> results = el.findElements(By.tagName("tr"));
+
+        assertEquals(1, results.size());
+        verify(client).findElement("s1", "(//button//tr)[2]");
     }
 
     // --- click + sendKeys → /element/action -------------------------------

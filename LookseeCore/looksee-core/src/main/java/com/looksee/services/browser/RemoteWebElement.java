@@ -1,15 +1,19 @@
 package com.looksee.services.browser;
 
 import com.looksee.browsing.client.BrowsingClient;
+import com.looksee.browsing.client.BrowsingClientException;
+import com.looksee.browsing.generated.ApiException;
 import com.looksee.browsing.generated.model.ElementAction;
 import com.looksee.browsing.generated.model.ElementState;
 import com.looksee.browsing.generated.model.Rect;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import org.openqa.selenium.By;
 import org.openqa.selenium.Dimension;
+import org.openqa.selenium.NoSuchElementException;
 import org.openqa.selenium.OutputType;
 import org.openqa.selenium.Point;
 import org.openqa.selenium.Rectangle;
@@ -41,10 +45,7 @@ import org.openqa.selenium.WebElement;
  */
 public final class RemoteWebElement implements WebElement {
 
-    private static final String PHASE_3C =
-        "RemoteWebElement: this WebElement op is deferred to phase 3c "
-        + "(route through Browser.performClick / performAction / extractAttributes / "
-        + "getElementScreenshot / scrollToElement instead)";
+    private static final int MAX_NESTED_FIND_ELEMENTS = 500;
 
     private final String sessionId;
     private final String elementHandle;
@@ -101,6 +102,49 @@ public final class RemoteWebElement implements WebElement {
                 + "wired element.");
         }
         return client;
+    }
+
+    private String requireSourceXpath() {
+        if (sourceXpath == null) {
+            throw new UnsupportedOperationException(
+                "RemoteWebElement.findElement(s): this element was constructed without a source xpath "
+                + "and cannot compose a nested lookup. Construct via RemoteBrowser.findElement.");
+        }
+        return sourceXpath;
+    }
+
+    /**
+     * Composes the supported relative Selenium locator forms into a document-relative xpath.
+     * Nested remote lookup deliberately supports only xpath starting with {@code ./} or
+     * {@code .//}, plus tag names, because the browser-service exposes a singular xpath find.
+     */
+    static String composeRelativeXpath(String parentXpath, By by) {
+        Objects.requireNonNull(parentXpath, "parentXpath");
+        Objects.requireNonNull(by, "by");
+        String locator = by.toString();
+        if (locator.startsWith("By.xpath: ")) {
+            String relativeXpath = locator.substring("By.xpath: ".length()).trim();
+            if (relativeXpath.startsWith("./") || relativeXpath.startsWith(".//")) {
+                return parentXpath + relativeXpath.substring(1);
+            }
+            throw new UnsupportedOperationException(
+                "RemoteWebElement: only relative xpath (./ or .//) supported, got " + relativeXpath);
+        }
+        if (locator.startsWith("By.tagName: ")) {
+            String tagName = locator.substring("By.tagName: ".length()).trim();
+            return parentXpath + "//" + tagName;
+        }
+        throw new UnsupportedOperationException(
+            "RemoteWebElement.findElement(s): unsupported By type: " + by);
+    }
+
+    private static boolean isNotFound(ElementState state) {
+        return state == null || !Boolean.TRUE.equals(state.getFound());
+    }
+
+    private static boolean isNotFound(BrowsingClientException exception) {
+        return exception.getCause() instanceof ApiException
+            && ((ApiException) exception.getCause()).getCode() == 404;
     }
 
     public String getSessionId()     { return sessionId; }
@@ -240,8 +284,47 @@ public final class RemoteWebElement implements WebElement {
         return r == null ? "" : r.toString();
     }
 
-    @Override public java.util.List<WebElement> findElements(By by) { throw new UnsupportedOperationException(PHASE_3C + " (findElements)"); }
-    @Override public WebElement findElement(By by)          { throw new UnsupportedOperationException(PHASE_3C + " (findElement-nested)"); }
+    @Override
+    public List<WebElement> findElements(By by) {
+        String xpath = composeRelativeXpath(requireSourceXpath(), by);
+        BrowsingClient browsingClient = requireClient("findElements");
+        List<WebElement> matches = new ArrayList<>();
+        for (int index = 1; index <= MAX_NESTED_FIND_ELEMENTS; index++) {
+            String indexedXpath = "(" + xpath + ")[" + index + "]";
+            ElementState state;
+            try {
+                state = browsingClient.findElement(sessionId, indexedXpath);
+            } catch (BrowsingClientException exception) {
+                if (isNotFound(exception)) {
+                    break;
+                }
+                throw exception;
+            }
+            if (isNotFound(state)) {
+                break;
+            }
+            matches.add(new RemoteWebElement(sessionId, indexedXpath, state, browsingClient));
+        }
+        return matches;
+    }
+
+    @Override
+    public WebElement findElement(By by) {
+        String xpath = composeRelativeXpath(requireSourceXpath(), by);
+        ElementState state;
+        try {
+            state = requireClient("findElement").findElement(sessionId, xpath);
+        } catch (BrowsingClientException exception) {
+            if (!isNotFound(exception)) {
+                throw exception;
+            }
+            throw new NoSuchElementException("No nested element found for xpath: " + xpath, exception);
+        }
+        if (isNotFound(state)) {
+            throw new NoSuchElementException("No nested element found for xpath: " + xpath);
+        }
+        return new RemoteWebElement(sessionId, xpath, state, client);
+    }
 
     @Override
     public String getCssValue(String propertyName) {

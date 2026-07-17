@@ -1,7 +1,9 @@
 package com.looksee.services.browser;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
 
+import com.looksee.browsing.client.BrowsingClient;
 import com.looksee.browsing.generated.model.ElementState;
 import com.looksee.browsing.generated.model.Rect;
 import java.util.Map;
@@ -89,24 +91,42 @@ class RemoteWebElementTest {
     }
 
     @Test
-    void unsupportedWebElementMethods_allThrowWithPhase3cMarker() {
-        // After phase 3f, only findElement(By) and findElements(By) still
-        // throw the phase-3c marker — both need either client-side xpath
-        // composition or a new server-side find-children endpoint (phase 3g).
-        // The other 9 phase-3c-deferred methods got real implementations
-        // routed through executeScript / performElementAction /
-        // captureElementScreenshot — covered in their own test cases below.
+    void nestedFinds_requireSourceXpath() {
         RemoteWebElement el = new RemoteWebElement("s1", state("h1", true, Map.of(), null));
 
         Runnable[] checks = new Runnable[] {
-            () -> el.findElements(By.xpath("//*")),
-            () -> el.findElement(By.xpath("//*")),
+            () -> el.findElements(By.xpath("./child")),
+            () -> el.findElement(By.xpath("./child")),
         };
         for (Runnable r : checks) {
             UnsupportedOperationException ex = assertThrows(UnsupportedOperationException.class, r::run);
-            assertTrue(ex.getMessage().contains("phase 3c"),
-                "message should point at phase 3c: " + ex.getMessage());
+            assertTrue(ex.getMessage().contains("source xpath"),
+                "message should point at the missing source xpath: " + ex.getMessage());
         }
+    }
+
+    @Test
+    void nestedFinds_rejectUnsupportedByTypes() {
+        RemoteWebElement el = new RemoteWebElement("s1", "//form", state("h1", true, Map.of(), null),
+            mock(BrowsingClient.class));
+
+        UnsupportedOperationException ex = assertThrows(UnsupportedOperationException.class,
+            () -> el.findElement(By.id("submit")));
+
+        assertTrue(ex.getMessage().contains("unsupported By type"),
+            "message should identify the unsupported locator: " + ex.getMessage());
+    }
+
+    @Test
+    void nestedFinds_rejectAbsoluteXpaths() {
+        RemoteWebElement el = new RemoteWebElement("s1", "//form", state("h1", true, Map.of(), null),
+            mock(BrowsingClient.class));
+
+        UnsupportedOperationException ex = assertThrows(UnsupportedOperationException.class,
+            () -> el.findElements(By.xpath("//tr")));
+
+        assertTrue(ex.getMessage().contains("relative xpath"),
+            "message should identify the relative xpath requirement: " + ex.getMessage());
     }
 
     @Test
