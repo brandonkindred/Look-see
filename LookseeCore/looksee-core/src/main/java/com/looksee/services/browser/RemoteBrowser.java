@@ -48,7 +48,6 @@ public class RemoteBrowser extends Browser {
 
     private static final Logger log = LoggerFactory.getLogger(RemoteBrowser.class);
     private static final String PHASE_3B = "RemoteBrowser: element-handle ops are deferred to phase 3b";
-    private static final int MAX_FIND_ELEMENTS = 500;
 
     private final BrowsingClient client;
     private final String sessionId;
@@ -302,29 +301,19 @@ public class RemoteBrowser extends Browser {
     @Override
     public List<WebElement> findElements(String xpath) throws WebDriverException {
         List<WebElement> matches = new ArrayList<>();
-        for (int index = 1; index <= MAX_FIND_ELEMENTS; index++) {
+        // Enumerate until the first miss — Selenium returns the full set with no
+        // artificial cap. Each indexed lookup is a separate round-trip; a stable
+        // plural snapshot still needs a server-side findElements under the lock.
+        for (int index = 1; ; index++) {
             String indexedXpath = "(" + xpath + ")[" + index + "]";
             // browser-service returns HTTP 200 + found=false for missing
             // elements; HTTP 404 means session expiry and must propagate.
-            //
-            // Indexed lookups are independent round-trips. A stable plural
-            // snapshot requires a server-side findElements under the session lock.
             ElementState state = client.findElement(sessionId, indexedXpath);
             if (!Boolean.TRUE.equals(state.getFound())) {
                 return matches;
             }
             matches.add(new RemoteWebElement(sessionId, indexedXpath, state, client));
         }
-        // Exactly MAX matches is valid; only fail when a further match exists.
-        ElementState overflow = client.findElement(
-            sessionId, "(" + xpath + ")[" + (MAX_FIND_ELEMENTS + 1) + "]");
-        if (!Boolean.TRUE.equals(overflow.getFound())) {
-            return matches;
-        }
-        throw new WebDriverException(
-            "RemoteBrowser.findElements exceeded " + MAX_FIND_ELEMENTS
-                + " matches for xpath=" + xpath
-                + "; refusing to silently truncate results");
     }
 
     @Override

@@ -16,7 +16,6 @@ import org.openqa.selenium.OutputType;
 import org.openqa.selenium.Point;
 import org.openqa.selenium.Rectangle;
 import org.openqa.selenium.StaleElementReferenceException;
-import org.openqa.selenium.WebDriverException;
 import org.openqa.selenium.WebElement;
 
 /**
@@ -44,8 +43,6 @@ import org.openqa.selenium.WebElement;
  * which would be a new finding to reconcile in phase 3c.
  */
 public final class RemoteWebElement implements WebElement {
-
-    private static final int MAX_NESTED_FIND_ELEMENTS = 500;
 
     private final String sessionId;
     private final String elementHandle;
@@ -350,7 +347,8 @@ public final class RemoteWebElement implements WebElement {
         BrowsingClient browsingClient = requireClient("findElements");
         requireSourceXpathStillBoundToHandle(browsingClient);
         List<WebElement> matches = new ArrayList<>();
-        for (int index = 1; index <= MAX_NESTED_FIND_ELEMENTS; index++) {
+        // Full Selenium semantics: enumerate until the first miss, no artificial cap.
+        for (int index = 1; ; index++) {
             String indexedXpath = "(" + xpath + ")[" + index + "]";
             // HTTP 200 + found=false ends enumeration; HTTP 404 (session gone)
             // must not be treated as an empty remainder.
@@ -363,16 +361,6 @@ public final class RemoteWebElement implements WebElement {
             }
             matches.add(new RemoteWebElement(sessionId, indexedXpath, state, browsingClient));
         }
-        // Exactly MAX matches is valid; only fail when a further match exists.
-        ElementState overflow = browsingClient.findElement(
-            sessionId, "(" + xpath + ")[" + (MAX_NESTED_FIND_ELEMENTS + 1) + "]");
-        if (isNotFound(overflow)) {
-            return matches;
-        }
-        throw new WebDriverException(
-            "RemoteWebElement.findElements exceeded " + MAX_NESTED_FIND_ELEMENTS
-                + " matches for xpath=" + xpath
-                + "; refusing to silently truncate results");
     }
 
     @Override

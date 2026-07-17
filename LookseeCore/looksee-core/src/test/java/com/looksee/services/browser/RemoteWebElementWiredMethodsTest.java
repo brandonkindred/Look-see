@@ -17,7 +17,6 @@ import org.mockito.ArgumentCaptor;
 import org.openqa.selenium.By;
 import org.openqa.selenium.NoSuchElementException;
 import org.openqa.selenium.OutputType;
-import org.openqa.selenium.WebDriverException;
 import org.openqa.selenium.WebElement;
 
 /**
@@ -108,35 +107,20 @@ class RemoteWebElementWiredMethodsTest {
     }
 
     @Test
-    void findElements_throwsWhenMatchLimitExceeded() {
-        when(client.findElement(eq("s1"), anyString()))
-            .thenReturn(new ElementState()
-                .elementHandle("h").found(true).displayed(true).attributes(Map.of()));
-        // Parent verify must still see the original handle.
+    void findElements_returnsAllMatchesWithoutArtificialCap() {
+        ElementState found = new ElementState()
+            .elementHandle("h").found(true).displayed(true).attributes(Map.of());
+        when(client.findElement(eq("s1"), anyString())).thenReturn(found);
         when(client.findElement("s1", "//button"))
             .thenReturn(new ElementState()
                 .elementHandle("h1").found(true).displayed(true).attributes(Map.of()));
-
-        WebDriverException ex = assertThrows(WebDriverException.class,
-            () -> el.findElements(By.tagName("tr")));
-        assertTrue(ex.getMessage().contains("refusing to silently truncate"),
-            ex.getMessage());
-    }
-
-    @Test
-    void findElements_allowsExactMatchLimit() {
-        when(client.findElement(eq("s1"), anyString()))
-            .thenReturn(new ElementState()
-                .elementHandle("h").found(true).displayed(true).attributes(Map.of()));
-        when(client.findElement("s1", "//button"))
-            .thenReturn(new ElementState()
-                .elementHandle("h1").found(true).displayed(true).attributes(Map.of()));
-        when(client.findElement("s1", "((//button)//tr)[501]"))
+        // 501 matches then miss — previously a hard 500 cap would have thrown.
+        when(client.findElement("s1", "((//button)//tr)[502]"))
             .thenReturn(new ElementState().found(false));
 
         List<WebElement> results = el.findElements(By.tagName("tr"));
 
-        assertEquals(500, results.size());
+        assertEquals(501, results.size());
     }
 
     // --- click + sendKeys → /element/action -------------------------------
