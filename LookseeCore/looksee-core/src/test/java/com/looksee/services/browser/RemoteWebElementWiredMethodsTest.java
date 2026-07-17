@@ -17,6 +17,7 @@ import org.mockito.ArgumentCaptor;
 import org.openqa.selenium.By;
 import org.openqa.selenium.NoSuchElementException;
 import org.openqa.selenium.OutputType;
+import org.openqa.selenium.WebDriverException;
 import org.openqa.selenium.WebElement;
 
 /**
@@ -43,13 +44,13 @@ class RemoteWebElementWiredMethodsTest {
     void findElement_composesRelativeXpathAndReturnsWiredChild() {
         ElementState child = new ElementState()
             .elementHandle("h2").found(true).displayed(true).attributes(Map.of("id", "name"));
-        when(client.findElement("s1", "//button/input")).thenReturn(child);
+        when(client.findElement("s1", "((//button)/input)[1]")).thenReturn(child);
 
         RemoteWebElement result = (RemoteWebElement) el.findElement(By.xpath("./input"));
 
         assertEquals("h2", result.getElementHandle());
-        assertEquals("//button/input", result.getSourceXpath());
-        verify(client).findElement("s1", "//button/input");
+        assertEquals("((//button)/input)[1]", result.getSourceXpath());
+        verify(client).findElement("s1", "((//button)/input)[1]");
     }
 
     @Test
@@ -58,38 +59,50 @@ class RemoteWebElementWiredMethodsTest {
             .elementHandle("tr-1").found(true).displayed(true).attributes(Map.of());
         ElementState second = new ElementState()
             .elementHandle("tr-2").found(true).displayed(true).attributes(Map.of());
-        when(client.findElement("s1", "(//button//tr)[1]")).thenReturn(first);
-        when(client.findElement("s1", "(//button//tr)[2]")).thenReturn(second);
-        when(client.findElement("s1", "(//button//tr)[3]")).thenReturn(new ElementState().found(false));
+        when(client.findElement("s1", "((//button)//tr)[1]")).thenReturn(first);
+        when(client.findElement("s1", "((//button)//tr)[2]")).thenReturn(second);
+        when(client.findElement("s1", "((//button)//tr)[3]")).thenReturn(new ElementState().found(false));
 
         List<WebElement> results = el.findElements(By.tagName("tr"));
 
         assertEquals(2, results.size());
-        assertEquals("(//button//tr)[1]", ((RemoteWebElement) results.get(0)).getSourceXpath());
-        assertEquals("(//button//tr)[2]", ((RemoteWebElement) results.get(1)).getSourceXpath());
-        verify(client).findElement("s1", "(//button//tr)[3]");
+        assertEquals("((//button)//tr)[1]", ((RemoteWebElement) results.get(0)).getSourceXpath());
+        assertEquals("((//button)//tr)[2]", ((RemoteWebElement) results.get(1)).getSourceXpath());
+        verify(client).findElement("s1", "((//button)//tr)[3]");
     }
 
     @Test
     void findElement_throwsNoSuchElementWhenResponseIsNotFound() {
-        when(client.findElement("s1", "//button/input")).thenReturn(new ElementState().found(false));
+        when(client.findElement("s1", "((//button)/input)[1]")).thenReturn(new ElementState().found(false));
 
         assertThrows(NoSuchElementException.class, () -> el.findElement(By.xpath("./input")));
     }
 
     @Test
-    void findElements_stopsWhenIndexedLookupReturnsNotFoundResponse() {
+    void findElements_propagatesSessionNotFoundInsteadOfTruncating() {
         ElementState first = new ElementState()
             .elementHandle("tr-1").found(true).displayed(true).attributes(Map.of());
-        when(client.findElement("s1", "(//button//tr)[1]")).thenReturn(first);
-        when(client.findElement("s1", "(//button//tr)[2]"))
+        when(client.findElement("s1", "((//button)//tr)[1]")).thenReturn(first);
+        when(client.findElement("s1", "((//button)//tr)[2]"))
             .thenThrow(new BrowsingClientException("findElement failed",
-                new ApiException(404, "not found")));
+                new ApiException(404, "session not found")));
 
-        List<WebElement> results = el.findElements(By.tagName("tr"));
+        BrowsingClientException ex = assertThrows(BrowsingClientException.class,
+            () -> el.findElements(By.tagName("tr")));
+        assertTrue(ex.getCause() instanceof ApiException);
+        assertEquals(404, ((ApiException) ex.getCause()).getCode());
+    }
 
-        assertEquals(1, results.size());
-        verify(client).findElement("s1", "(//button//tr)[2]");
+    @Test
+    void findElements_throwsWhenMatchLimitExceeded() {
+        when(client.findElement(eq("s1"), anyString()))
+            .thenReturn(new ElementState()
+                .elementHandle("h").found(true).displayed(true).attributes(Map.of()));
+
+        WebDriverException ex = assertThrows(WebDriverException.class,
+            () -> el.findElements(By.tagName("tr")));
+        assertTrue(ex.getMessage().contains("refusing to silently truncate"),
+            ex.getMessage());
     }
 
     // --- click + sendKeys → /element/action -------------------------------

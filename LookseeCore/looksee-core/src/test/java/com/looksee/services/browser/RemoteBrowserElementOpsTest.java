@@ -56,7 +56,7 @@ class RemoteBrowserElementOpsTest {
 
     @Test
     void findElement_returnsRemoteWebElement() {
-        when(client.findElement("session-1", "//button")).thenReturn(state("h1"));
+        when(client.findElement("session-1", "(//button)[1]")).thenReturn(state("h1"));
         WebElement el = remote.findElement("//button");
         assertTrue(el instanceof RemoteWebElement);
         assertEquals("h1", ((RemoteWebElement) el).getElementHandle());
@@ -71,7 +71,7 @@ class RemoteBrowserElementOpsTest {
 
     @Test
     void findWebElementByXpath_delegatesToFindElement() {
-        when(client.findElement("session-1", "//x")).thenReturn(state("h2"));
+        when(client.findElement("session-1", "(//x)[1]")).thenReturn(state("h2"));
         WebElement el = remote.findWebElementByXpath("//x");
         assertEquals("h2", ((RemoteWebElement) el).getElementHandle());
     }
@@ -356,7 +356,7 @@ class RemoteBrowserElementOpsTest {
         // methods (click, sendKeys, etc.) route correctly without needing
         // a parent RemoteBrowser. Verifies the client passthrough in
         // RemoteBrowser.findElement.
-        when(client.findElement("session-1", "//button"))
+        when(client.findElement("session-1", "(//button)[1]"))
             .thenReturn(new com.looksee.browsing.generated.model.ElementState()
                 .elementHandle("h-found").found(true).displayed(true).attributes(java.util.Map.of()));
 

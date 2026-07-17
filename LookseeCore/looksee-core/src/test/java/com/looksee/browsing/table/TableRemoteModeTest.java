@@ -41,9 +41,9 @@ class TableRemoteModeTest {
             .found(true)
             .displayed(true)
             .attributes(Map.of());
-        when(client.findElement("s1", "(//table/thead/tr)[1]")).thenReturn(firstRow);
-        when(client.findElement("s1", "(//table/thead/tr)[2]")).thenReturn(secondRow);
-        when(client.findElement("s1", "(//table/thead/tr)[3]"))
+        when(client.findElement("s1", "((//table/thead)/tr)[1]")).thenReturn(firstRow);
+        when(client.findElement("s1", "((//table/thead)/tr)[2]")).thenReturn(secondRow);
+        when(client.findElement("s1", "((//table/thead)/tr)[3]"))
             .thenReturn(new ElementState().found(false));
 
         Table table = new Table();
@@ -54,9 +54,9 @@ class TableRemoteModeTest {
         assertNotNull(rows);
         // Live loadHeaders path still returns empty rows; nested findElements must succeed.
         assertTrue(rows.isEmpty());
-        verify(client).findElement("s1", "(//table/thead/tr)[1]");
-        verify(client).findElement("s1", "(//table/thead/tr)[2]");
-        verify(client).findElement("s1", "(//table/thead/tr)[3]");
+        verify(client).findElement("s1", "((//table/thead)/tr)[1]");
+        verify(client).findElement("s1", "((//table/thead)/tr)[2]");
+        verify(client).findElement("s1", "((//table/thead)/tr)[3]");
     }
 
     @Test

@@ -154,6 +154,33 @@ class RemoteWebElementTest {
     }
 
     @Test
+    void composeRelativeXpath_parenthesizesParentBeforeAppending() {
+        assertEquals("(//section[@id='x'] | //aside[@id='y'])//button",
+            RemoteWebElement.composeRelativeXpath(
+                "//section[@id='x'] | //aside[@id='y']", By.xpath(".//button")));
+    }
+
+    @Test
+    void composeRelativeXpath_supportsParentAxis() {
+        assertEquals("(//form[@id='login'])/..",
+            RemoteWebElement.composeRelativeXpath("//form[@id='login']", By.xpath("..")));
+    }
+
+    @Test
+    void findElement_indexesNestedSourceXpathInSameLookup() {
+        BrowsingClient client = mock(BrowsingClient.class);
+        RemoteWebElement el = new RemoteWebElement("s1", "//form", state("h1", true, Map.of(), null), client);
+        ElementState child = new ElementState()
+            .elementHandle("h2").found(true).displayed(true).attributes(Map.of());
+        when(client.findElement("s1", "((//form)//input)[1]")).thenReturn(child);
+
+        RemoteWebElement result = (RemoteWebElement) el.findElement(By.tagName("input"));
+
+        assertEquals("((//form)//input)[1]", result.getSourceXpath());
+        verify(client, never()).findElement(eq("s1"), eq("(//form)//input"));
+    }
+
+    @Test
     void clientLessConstruction_throwsForWebElementApiMethods() {
         // RemoteWebElement constructed via the legacy 2-arg or 3-arg form
         // (no BrowsingClient) can't route WebElement-API calls. Each method

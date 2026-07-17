@@ -3,7 +3,6 @@ package com.looksee.services.browser;
 import com.looksee.browser.Browser;
 import com.looksee.browsing.client.BrowsingClient;
 import com.looksee.browsing.client.BrowsingClientException;
-import com.looksee.browsing.generated.ApiException;
 import com.looksee.browsing.generated.model.AlertState;
 import com.looksee.browsing.generated.model.DomRemovePreset;
 import com.looksee.browsing.generated.model.ElementState;
@@ -284,43 +283,20 @@ public class RemoteBrowser extends Browser {
 
     @Override
     public WebElement findElement(String xpath) throws WebDriverException {
-        ElementState state = client.findElement(sessionId, xpath);
+        // Always resolve via an indexed locator in one round-trip so the
+        // returned handle and source xpath describe the same DOM snapshot.
+        // Nested finds then compose against that concrete node rather than
+        // every sibling that matched the original non-unique xpath.
+        String sourceXpath = RemoteWebElement.toIndexedSourceXpath(xpath);
+        ElementState state = client.findElement(sessionId, sourceXpath);
         if (!Boolean.TRUE.equals(state.getFound())) {
             throw new NoSuchElementException(
                 "RemoteBrowser: element not found for xpath=" + xpath);
         }
-        // Nested RemoteWebElement.findElement(s) compose relative locators onto
-        // this source xpath. If the original xpath matches multiple nodes,
-        // store an indexed unique xpath so descendants stay scoped to the
-        // resolved element (Selenium nested-find semantics).
-        String sourceXpath = uniquifySourceXpath(xpath);
         // Pass the BrowsingClient through so the returned element can route
         // its own WebElement-API calls (phase 3f) without needing this
         // RemoteBrowser as a parent reference.
         return new RemoteWebElement(sessionId, sourceXpath, state, client);
-    }
-
-    /**
-     * When {@code xpath} is not already indexed and a second match exists,
-     * return {@code (xpath)[1]} so nested composition cannot escape into
-     * siblings that also match the original non-unique locator.
-     */
-    private String uniquifySourceXpath(String xpath) {
-        if (xpath == null || xpath.isEmpty() || xpath.matches(".*\\)\\[\\d+\\]\\s*$")) {
-            return xpath;
-        }
-        try {
-            ElementState second = client.findElement(sessionId, "(" + xpath + ")[2]");
-            // Treat null / not-found the same: xpath is already unique enough.
-            if (second != null && Boolean.TRUE.equals(second.getFound())) {
-                return "(" + xpath + ")[1]";
-            }
-        } catch (BrowsingClientException exception) {
-            if (!isNotFound(exception)) {
-                throw exception;
-            }
-        }
-        return xpath;
     }
 
     @Override
@@ -328,21 +304,18 @@ public class RemoteBrowser extends Browser {
         List<WebElement> matches = new ArrayList<>();
         for (int index = 1; index <= MAX_FIND_ELEMENTS; index++) {
             String indexedXpath = "(" + xpath + ")[" + index + "]";
-            ElementState state;
-            try {
-                state = client.findElement(sessionId, indexedXpath);
-            } catch (BrowsingClientException exception) {
-                if (isNotFound(exception)) {
-                    break;
-                }
-                throw exception;
-            }
+            // browser-service returns HTTP 200 + found=false for missing
+            // elements; HTTP 404 means session expiry and must propagate.
+            ElementState state = client.findElement(sessionId, indexedXpath);
             if (!Boolean.TRUE.equals(state.getFound())) {
-                break;
+                return matches;
             }
             matches.add(new RemoteWebElement(sessionId, indexedXpath, state, client));
         }
-        return matches;
+        throw new WebDriverException(
+            "RemoteBrowser.findElements exceeded " + MAX_FIND_ELEMENTS
+                + " matches for xpath=" + xpath
+                + "; refusing to silently truncate results");
     }
 
     @Override
@@ -393,11 +366,6 @@ public class RemoteBrowser extends Browser {
                 + remote.getSessionId() + " but this browser is session " + sessionId);
         }
         return remote;
-    }
-
-    private static boolean isNotFound(BrowsingClientException exception) {
-        return exception.getCause() instanceof ApiException
-            && ((ApiException) exception.getCause()).getCode() == 404;
     }
 
     // --- Scroll ops (ScrollMode enum maps 1:1 to Browser.java scroll methods) -

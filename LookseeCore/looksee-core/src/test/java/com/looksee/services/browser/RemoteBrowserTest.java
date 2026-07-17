@@ -127,44 +127,30 @@ class RemoteBrowserTest {
     // Every other op is wired in phase 3b — see RemoteBrowserElementOpsTest.
 
     @Test
-    void findElement_indexesSourceXpathWhenMultipleMatchesExist() {
+    void findElement_indexesSourceXpathInSameLookup() {
         ElementState first = new ElementState()
             .elementHandle("f1").found(true).displayed(true).attributes(Map.of());
-        ElementState second = new ElementState()
-            .elementHandle("f2").found(true).displayed(true).attributes(Map.of());
-        when(client.findElement("session-1", "//form")).thenReturn(first);
-        when(client.findElement("session-1", "(//form)[2]")).thenReturn(second);
+        when(client.findElement("session-1", "(//form)[1]")).thenReturn(first);
 
         RemoteWebElement el = (RemoteWebElement) remote.findElement("//form");
 
         assertEquals("(//form)[1]", el.getSourceXpath());
-        verify(client).findElement("session-1", "//form");
+        assertEquals("f1", el.getElementHandle());
+        verify(client).findElement("session-1", "(//form)[1]");
+        verify(client, never()).findElement("session-1", "//form");
+        verify(client, never()).findElement("session-1", "(//form)[2]");
+    }
+
+    @Test
+    void findElement_preservesAlreadyIndexedSourceXpath() {
+        ElementState only = new ElementState()
+            .elementHandle("f1").found(true).displayed(true).attributes(Map.of());
+        when(client.findElement("session-1", "(//form)[2]")).thenReturn(only);
+
+        RemoteWebElement el = (RemoteWebElement) remote.findElement("(//form)[2]");
+
+        assertEquals("(//form)[2]", el.getSourceXpath());
         verify(client).findElement("session-1", "(//form)[2]");
-    }
-
-    @Test
-    void findElement_keepsOriginalXpathWhenUnique() {
-        ElementState only = new ElementState()
-            .elementHandle("f1").found(true).displayed(true).attributes(Map.of());
-        when(client.findElement("session-1", "//form[@id='x']")).thenReturn(only);
-        when(client.findElement("session-1", "(//form[@id='x'])[2]"))
-            .thenReturn(new ElementState().found(false));
-
-        RemoteWebElement el = (RemoteWebElement) remote.findElement("//form[@id='x']");
-
-        assertEquals("//form[@id='x']", el.getSourceXpath());
-    }
-
-    @Test
-    void findElement_keepsOriginalXpathWhenSecondProbeReturnsNull() {
-        ElementState only = new ElementState()
-            .elementHandle("f1").found(true).displayed(true).attributes(Map.of());
-        when(client.findElement("session-1", "//button")).thenReturn(only);
-        // Unstubbed [2] probe returns null from Mockito — must not NPE.
-
-        RemoteWebElement el = (RemoteWebElement) remote.findElement("//button");
-
-        assertEquals("//button", el.getSourceXpath());
     }
 
     @Test
