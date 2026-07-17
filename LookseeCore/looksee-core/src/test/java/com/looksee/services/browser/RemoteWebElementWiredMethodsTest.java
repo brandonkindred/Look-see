@@ -251,20 +251,45 @@ class RemoteWebElementWiredMethodsTest {
     // --- DOM property reads → /execute ------------------------------------
 
     @Test
-    void getText_usesInnerTextForRenderedVisibleText() {
+    void getText_usesInnerTextOnlyAfterVisibilityCheck() {
         ArgumentCaptor<String> scriptCap = ArgumentCaptor.forClass(String.class);
         when(client.executeScript(eq("s1"), scriptCap.capture(), any())).thenReturn("Hello, world");
 
         assertEquals("Hello, world", el.getText());
-        assertTrue(scriptCap.getValue().contains("innerText"),
-            "getText should prefer innerText (WebDriver rendered-text semantics): "
-                + scriptCap.getValue());
+        String script = scriptCap.getValue();
+        assertTrue(script.contains("getComputedStyle"),
+            "getText must gate on rendered visibility before reading text: " + script);
+        assertTrue(script.contains("display === 'none'"),
+            "getText must return '' for display:none (WebDriver semantics): " + script);
+        assertTrue(script.contains("innerText"),
+            "getText should prefer innerText for visible nodes: " + script);
+        assertTrue(script.indexOf("getComputedStyle") < script.indexOf("innerText"),
+            "visibility check must precede innerText (Chromium innerText falls back to textContent when hidden)");
     }
 
     @Test
     void getText_returnsEmptyStringOnNullResult() {
         when(client.executeScript(eq("s1"), any(), any())).thenReturn(null);
         assertEquals("", el.getText());
+    }
+
+    @Test
+    void findElements_propagatesNullElementStateInsteadOfTruncating() {
+        ElementState first = new ElementState()
+            .elementHandle("tr-1").found(true).displayed(true).attributes(Map.of());
+        when(client.findElement("s1", "((//button)//tr)[1]")).thenReturn(first);
+        when(client.findElement("s1", "((//button)//tr)[2]")).thenReturn(null);
+
+        BrowsingClientException ex = assertThrows(BrowsingClientException.class,
+            () -> el.findElements(By.tagName("tr")));
+        assertTrue(ex.getMessage().contains("null ElementState"));
+    }
+
+    @Test
+    void requireElementState_rejectsNull() {
+        BrowsingClientException ex = assertThrows(BrowsingClientException.class,
+            () -> RemoteWebElement.requireElementState(null));
+        assertTrue(ex.getMessage().contains("null ElementState"));
     }
 
     @Test

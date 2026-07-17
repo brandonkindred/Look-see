@@ -161,8 +161,24 @@ public final class RemoteWebElement implements WebElement {
         return "(" + xpath + ")[1]";
     }
 
-    private static boolean isNotFound(ElementState state) {
-        return state == null || !Boolean.TRUE.equals(state.getFound());
+    /**
+     * True when the server explicitly reported {@code found:false}.
+     * Null is a protocol failure and throws {@link BrowsingClientException}.
+     */
+    static boolean isExplicitMiss(ElementState state) {
+        requireElementState(state);
+        return !Boolean.TRUE.equals(state.getFound());
+    }
+
+    /**
+     * Null ElementState is a protocol/transport failure, not an xpath miss.
+     * Treating it as {@code found:false} would silently truncate plural finds.
+     */
+    static ElementState requireElementState(ElementState state) {
+        if (state == null) {
+            throw new BrowsingClientException("findElement returned null ElementState");
+        }
+        return state;
     }
 
     /**
@@ -178,7 +194,7 @@ public final class RemoteWebElement implements WebElement {
                                           String sessionId,
                                           String xpath) {
         try {
-            return browsingClient.findElement(sessionId, xpath);
+            return requireElementState(browsingClient.findElement(sessionId, xpath));
         } catch (BrowsingClientException e) {
             if (isLegacyElementMiss404(e)) {
                 return new ElementState().found(false);
@@ -415,11 +431,23 @@ public final class RemoteWebElement implements WebElement {
 
     @Override
     public String getText() {
-        // WebDriver getText returns rendered visible text, not raw textContent
-        // (which includes script/style/hidden descendants). innerText is the
-        // closest DOM property; fall back when unavailable (e.g. some SVG).
+        // WebDriver getText returns '' for non-rendered elements (e.g. display:none).
+        // Chromium's innerText getter falls back to textContent when not rendered,
+        // so visibility must be checked first — never read textContent as a
+        // hidden-element fallback. textContent is only used for displayed nodes
+        // that lack innerText (e.g. some SVG).
         Object r = requireClient("getText").executeScript(sessionId,
             "var el = arguments[0];"
+            + "function isShown(e) {"
+            + "  if (!e || e.nodeType !== 1) return false;"
+            + "  if (e.hidden === true) return false;"
+            + "  var s = window.getComputedStyle(e);"
+            + "  if (!s || s.display === 'none' || s.visibility === 'hidden') return false;"
+            + "  return true;"
+            + "}"
+            + "for (var n = el; n && n.nodeType === 1; n = n.parentElement) {"
+            + "  if (!isShown(n)) return '';"
+            + "}"
             + "var t = el.innerText;"
             + "if (t == null || t === undefined) t = el.textContent;"
             + "return t == null ? '' : String(t);",
@@ -444,7 +472,7 @@ public final class RemoteWebElement implements WebElement {
             // Each indexed lookup is a separate round-trip. True single-snapshot
             // enumeration needs a server-side plural find under the session lock.
             ElementState state = findElementCompat(browsingClient, sessionId, indexedXpath);
-            if (isNotFound(state)) {
+            if (isExplicitMiss(state)) {
                 // Parent may have been removed/replaced after the pre-loop check.
                 // Prefer stale over claiming an empty remainder (Selenium semantics).
                 requireSourceXpathStillBoundToHandle(browsingClient);
@@ -463,7 +491,7 @@ public final class RemoteWebElement implements WebElement {
         // composition stays scoped to this child, not every matching sibling.
         String childSourceXpath = toIndexedSourceXpath(composed);
         ElementState state = findElementCompat(browsingClient, sessionId, childSourceXpath);
-        if (isNotFound(state)) {
+        if (isExplicitMiss(state)) {
             requireSourceXpathStillBoundToHandle(browsingClient);
             throw new NoSuchElementException("No nested element found for xpath: " + childSourceXpath);
         }

@@ -288,7 +288,7 @@ public class RemoteBrowser extends Browser {
         // every sibling that matched the original non-unique xpath.
         String sourceXpath = RemoteWebElement.toIndexedSourceXpath(xpath);
         ElementState state = RemoteWebElement.findElementCompat(client, sessionId, sourceXpath);
-        if (!Boolean.TRUE.equals(state.getFound())) {
+        if (RemoteWebElement.isExplicitMiss(state)) {
             throw new NoSuchElementException(
                 "RemoteBrowser: element not found for xpath=" + xpath);
         }
@@ -309,10 +309,11 @@ public class RemoteBrowser extends Browser {
             // Current browser-service: HTTP 200 + found=false ends the loop.
             // Legacy draft servers may 404 with an element-not-found payload;
             // findElementCompat maps only those to found=false. Session expiry
-            // and unclassified 404s still propagate.
+            // and unclassified 404s still propagate. Null ElementState is a
+            // protocol failure (not a miss) and must not truncate the list.
             ElementState state = RemoteWebElement.findElementCompat(
                 client, sessionId, indexedXpath);
-            if (!Boolean.TRUE.equals(state.getFound())) {
+            if (RemoteWebElement.isExplicitMiss(state)) {
                 return matches;
             }
             matches.add(new RemoteWebElement(sessionId, indexedXpath, state, client));

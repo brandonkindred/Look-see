@@ -200,6 +200,17 @@ class RemoteBrowserTest {
     }
 
     @Test
+    void findElements_propagatesNullElementStateInsteadOfTruncating() {
+        ElementState first = new ElementState()
+            .elementHandle("f1").found(true).displayed(true).attributes(Map.of());
+        when(client.findElement("session-1", "(//form)[1]")).thenReturn(first);
+        when(client.findElement("session-1", "(//form)[2]")).thenReturn(null);
+
+        assertThrows(com.looksee.browsing.client.BrowsingClientException.class,
+            () -> remote.findElements("//form"));
+    }
+
+    @Test
     void getDriver_throwsUnsupported() {
         assertThrows(UnsupportedOperationException.class, () -> remote.getDriver());
     }
