@@ -821,14 +821,15 @@ components:
 
     ElementState:
       type: object
-      required: [found]
+      required: [found, element_handle]
       properties:
         element_handle:
-          type: string
-          nullable: true
+          # OpenAPI 3.1: nullability is a type union, not `nullable: true`.
+          type: [string, "null"]
           description: |
             Opaque handle for use in follow-up calls. Valid for the life of the
-            session. Null when `found` is false (xpath matched no node).
+            session. Present and null when `found` is false (xpath matched no node);
+            non-null string when `found` is true.
         found: { type: boolean }
         displayed: { type: boolean }
         attributes:
