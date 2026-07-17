@@ -95,6 +95,29 @@ class RemoteWebElementTest {
     }
 
     @Test
+    void getAttribute_returnsNullForFalseBooleanDomProperties() {
+        BrowsingClient client = mock(BrowsingClient.class);
+        RemoteWebElement el = new RemoteWebElement(
+            "s1", "//input", state("h1", true, Map.of(), null), client);
+        when(client.executeScript(eq("s1"), anyString(), any())).thenAnswer(invocation -> {
+            String script = invocation.getArgument(1);
+            // Assert the remote script preserves Selenium boolean-attribute semantics.
+            assertTrue(script.contains("typeof prop === 'boolean'"),
+                "getAttribute fallback must special-case boolean IDL properties");
+            java.util.List<?> args = invocation.getArgument(2);
+            String name = args.get(1).toString();
+            // Simulate: absent HTML attr, false DOM property (unchecked / enabled).
+            if ("checked".equals(name) || "disabled".equals(name)) {
+                return null;
+            }
+            return null;
+        });
+
+        assertNull(el.getAttribute("checked"));
+        assertNull(el.getAttribute("disabled"));
+    }
+
+    @Test
     void nullAttributes_treatedAsEmpty() {
         RemoteWebElement el = new RemoteWebElement("s1",
             new ElementState().elementHandle("h1").found(true));

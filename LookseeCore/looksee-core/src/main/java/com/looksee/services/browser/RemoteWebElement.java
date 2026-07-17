@@ -170,6 +170,10 @@ public final class RemoteWebElement implements WebElement {
      * element's handle before composing a nested lookup. browser-service has no
      * handle-scoped find, so xpath composition is the only nested path; this
      * check fails closed when the DOM has shifted the locator onto a different node.
+     *
+     * <p><b>TOCTOU:</b> validation and the subsequent child lookup are separate
+     * round-trips. A true atomic bind needs a server-side find relative to
+     * {@code element_handle} under the session lock.
      */
     private void requireSourceXpathStillBoundToHandle(BrowsingClient browsingClient) {
         String xpath = requireSourceXpath();
@@ -225,7 +229,10 @@ public final class RemoteWebElement implements WebElement {
             + "if (n === 'outerHTML') return el.outerHTML;"
             + "var attr = el.getAttribute(n);"
             + "if (attr !== null) return attr;"
+            // Selenium getAttribute: boolean IDL properties are "true" or null,
+            // never the string "false" (e.g. unchecked checkbox `checked`).
             + "var prop = el[n];"
+            + "if (typeof prop === 'boolean') return prop ? 'true' : null;"
             + "return prop == null ? null : String(prop);",
             List.of(Map.of("element_handle", elementHandle), name));
         return result == null ? null : result.toString();
