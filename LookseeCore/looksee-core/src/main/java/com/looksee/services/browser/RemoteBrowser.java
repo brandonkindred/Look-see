@@ -3,6 +3,7 @@ package com.looksee.services.browser;
 import com.looksee.browser.Browser;
 import com.looksee.browsing.client.BrowsingClient;
 import com.looksee.browsing.client.BrowsingClientException;
+import com.looksee.browsing.generated.ApiException;
 import com.looksee.browsing.generated.model.AlertState;
 import com.looksee.browsing.generated.model.DomRemovePreset;
 import com.looksee.browsing.generated.model.ElementState;
@@ -14,6 +15,8 @@ import com.looksee.browsing.generated.model.ViewportState;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import javax.imageio.ImageIO;
 import org.slf4j.Logger;
@@ -46,6 +49,7 @@ public class RemoteBrowser extends Browser {
 
     private static final Logger log = LoggerFactory.getLogger(RemoteBrowser.class);
     private static final String PHASE_3B = "RemoteBrowser: element-handle ops are deferred to phase 3b";
+    private static final int MAX_FIND_ELEMENTS = 500;
 
     private final BrowsingClient client;
     private final String sessionId;
@@ -292,6 +296,28 @@ public class RemoteBrowser extends Browser {
     }
 
     @Override
+    public List<WebElement> findElements(String xpath) throws WebDriverException {
+        List<WebElement> matches = new ArrayList<>();
+        for (int index = 1; index <= MAX_FIND_ELEMENTS; index++) {
+            String indexedXpath = "(" + xpath + ")[" + index + "]";
+            ElementState state;
+            try {
+                state = client.findElement(sessionId, indexedXpath);
+            } catch (BrowsingClientException exception) {
+                if (isNotFound(exception)) {
+                    break;
+                }
+                throw exception;
+            }
+            if (!Boolean.TRUE.equals(state.getFound())) {
+                break;
+            }
+            matches.add(new RemoteWebElement(sessionId, indexedXpath, state, client));
+        }
+        return matches;
+    }
+
+    @Override
     public WebElement findWebElementByXpath(String xpath) {
         // Browser.findWebElementByXpath delegates to the same driver.findElement
         // under the hood; the remote mapping is identical.
@@ -339,6 +365,11 @@ public class RemoteBrowser extends Browser {
                 + remote.getSessionId() + " but this browser is session " + sessionId);
         }
         return remote;
+    }
+
+    private static boolean isNotFound(BrowsingClientException exception) {
+        return exception.getCause() instanceof ApiException
+            && ((ApiException) exception.getCause()).getCode() == 404;
     }
 
     // --- Scroll ops (ScrollMode enum maps 1:1 to Browser.java scroll methods) -

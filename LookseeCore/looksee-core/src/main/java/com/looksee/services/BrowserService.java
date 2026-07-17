@@ -14,6 +14,7 @@ import com.looksee.browser.Browser;
 import com.looksee.services.browser.ElementStateAdapter;
 import com.looksee.services.browser.ImageElementStateAdapter;
 import com.looksee.services.browser.PageStateAdapter;
+import com.looksee.services.browser.RemoteWebElement;
 import com.looksee.models.Domain;
 import com.looksee.browser.utils.CssUtils;
 import com.looksee.browser.utils.HtmlUtils;
@@ -1042,6 +1043,64 @@ public class BrowserService {
 	}
 
 	/**
+	 * Generates a unique xpath without reaching through the Browser abstraction.
+	 * Remote elements already retain the xpath used to enumerate them, which is
+	 * both unique and avoids a local-driver lookup.
+	 */
+	public String generateXpath(WebElement element,
+								Browser browser,
+								Map<String, String> attributes)
+	{
+		assert element != null;
+		assert browser != null;
+		assert attributes != null;
+
+		String sourceXpath = getRemoteSourceXpath(element);
+		if (sourceXpath != null) {
+			return sourceXpath;
+		}
+
+		List<String> attributeChecks = new ArrayList<>();
+		List<String> valid_attributes = Arrays.asList(valid_xpath_attributes);
+
+		String xpath = "/"+element.getTagName();
+		for(String attr : attributes.keySet()){
+			if(valid_attributes.contains(attr)){
+				String attribute_values =attributes.get(attr);
+				String trimmed_values = cleanAttributeValues(attribute_values.trim());
+
+				if(trimmed_values.length() > 0
+						&& !BrowserUtils.isJavascript(trimmed_values)) {
+					attributeChecks.add("contains(@" + attr + ",\"" + trimmed_values.split(" ")[0] + "\")");
+				}
+			}
+		}
+		if(attributeChecks.size()>0){
+			xpath += "["+attributeChecks.get(0).toString() + "]";
+		}
+
+		WebElement parent = element;
+		String parent_tag_name = parent.getTagName();
+		while(!"html".equals(parent_tag_name) && !"body".equals(parent_tag_name)){
+			try{
+				parent = getParentElement(parent);
+				if(browser.findElements("//"+parent.getTagName() + xpath).size() == 1){
+					return "//"+parent.getTagName() + xpath;
+				}
+				else{
+					xpath = "/" + parent.getTagName() + xpath;
+				}
+			}catch(InvalidSelectorException e){
+				parent = null;
+				log.warn("Invalid selector exception occurred while generating xpath through parent nodes");
+				break;
+			}
+		}
+		xpath = "/"+xpath;
+		return uniqifyXpath(element, xpath, browser);
+	}
+
+	/**
 	 * generates a unique xpath for this element.
 	 *
 	 * @param element the element to generate an xpath for (must not be null)
@@ -1328,6 +1387,51 @@ public class BrowserService {
 		}
 
 		return xpath;
+	}
+
+	/**
+	 * Creates a unique xpath through the {@link Browser} abstraction.
+	 * Enumerated remote elements retain their indexed source xpath, so no
+	 * additional remote lookup is needed.
+	 */
+	public static String uniqifyXpath(WebElement elem, String xpath, Browser browser){
+		assert elem != null;
+		assert xpath != null;
+		assert browser != null;
+
+		String sourceXpath = getRemoteSourceXpath(elem);
+		if (sourceXpath != null) {
+			return sourceXpath;
+		}
+
+		try {
+			List<WebElement> elements = browser.findElements(xpath);
+			String element_tag_name = elem.getTagName();
+
+			if(elements.size()>1){
+				int count = 1;
+				for(WebElement element : elements){
+					if(element.getTagName().equals(element_tag_name)
+							&& element.getLocation().getX() == elem.getLocation().getX()
+							&& element.getLocation().getY() == elem.getLocation().getY()){
+						return "("+xpath+")[" + count + "]";
+					}
+					count++;
+				}
+			}
+
+		}catch(InvalidSelectorException e){
+			log.error(e.getMessage());
+		}
+
+		return xpath;
+	}
+
+	private static String getRemoteSourceXpath(WebElement element) {
+		if (element instanceof RemoteWebElement) {
+			return ((RemoteWebElement) element).getSourceXpath();
+		}
+		return null;
 	}
 	
 	/**
@@ -3333,8 +3437,8 @@ public class BrowserService {
 		assert browser != null;
 
 		Set<Form> form_list = new HashSet<Form>();
-		log.info("extracting forms from page with url    ::     "+browser.getDriver().getCurrentUrl());
-		List<WebElement> form_elements = browser.getDriver().findElements(By.xpath("//form"));
+		log.info("extracting forms from page with url    ::     "+browser.getCurrentUrl());
+		List<WebElement> form_elements = browser.findElements("//form");
 
 		//String host = domain.getHost();
 		for(WebElement form_elem : form_elements){
@@ -3348,7 +3452,7 @@ public class BrowserService {
 			//Map<String, String> css_map = CssUtils.loadCssProperties(form_elem);
 			com.looksee.models.Element form_tag = new com.looksee.models.Element(
 					form_elem.getText(),
-					uniqifyXpath(form_elem, "//form", browser.getDriver()),
+					uniqifyXpath(form_elem, "//form", browser),
 					form_elem.getTagName(),
 					browser.extractAttributes(form_elem),
 					new HashMap<>(),
@@ -3427,7 +3531,7 @@ public class BrowserService {
 			}
 			
 			com.looksee.models.Element input_tag = new com.looksee.models.Element(input_elem.getText(),
-					generateXpath(input_elem, browser.getDriver(), attributes), 
+					generateXpath(input_elem, browser, attributes), 
 					input_elem.getTagName(), 
 					attributes, 
 					new HashMap<>(), 

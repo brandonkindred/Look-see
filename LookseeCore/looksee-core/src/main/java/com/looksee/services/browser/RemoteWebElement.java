@@ -150,8 +150,8 @@ public final class RemoteWebElement implements WebElement {
     public String getSessionId()     { return sessionId; }
     public String getElementHandle() { return elementHandle; }
 
-    /** Package-private: source xpath for re-fetching live state during waitForElementClickable. */
-    String getSourceXpath() { return sourceXpath; }
+    /** Source xpath used to obtain this element, when available. */
+    public String getSourceXpath() { return sourceXpath; }
 
     /** Package-private: used by {@link RemoteBrowser#extractAttributes(WebElement)}. */
     Map<String, String> cachedAttributes() { return attributes; }
