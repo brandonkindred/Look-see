@@ -275,12 +275,15 @@ paths:
             schema: { $ref: "#/components/schemas/FindElementRequest" }
       responses:
         "200":
-          description: Element state
+          description: |
+            Element state. When the xpath matches no node, the response is still
+            HTTP 200 with `found: false` (and a null `element_handle`) — missing
+            elements are not signaled via 404.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ElementState" }
         "404":
-          description: Session or element not found
+          description: Session not found
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -818,11 +821,15 @@ components:
 
     ElementState:
       type: object
-      required: [element_handle, found]
+      required: [found, element_handle]
       properties:
         element_handle:
-          type: string
-          description: Opaque handle for use in follow-up calls. Valid for the life of the session.
+          # OpenAPI 3.1: nullability is a type union, not `nullable: true`.
+          type: [string, "null"]
+          description: |
+            Opaque handle for use in follow-up calls. Valid for the life of the
+            session. Non-null string iff `found` is true; JSON null iff `found`
+            is false.
         found: { type: boolean }
         displayed: { type: boolean }
         attributes:
@@ -830,6 +837,23 @@ components:
           additionalProperties: { type: string }
           description: From engine `Browser.extractAttributes` — flattened `name -> value` map.
         rect: { $ref: "#/components/schemas/Rect" }
+      # found ↔ element_handle pairing (OpenAPI 3.1). Kept as one object so Java
+      # openapi-generator still emits a single ElementState model; validators /
+      # contract tests should apply these rules. Split oneOf variants would break
+      # the generated client shape used throughout Look-see.
+      allOf:
+        - if:
+            properties: { found: { const: true } }
+            required: [found]
+          then:
+            properties:
+              element_handle: { type: string, minLength: 1 }
+        - if:
+            properties: { found: { const: false } }
+            required: [found]
+          then:
+            properties:
+              element_handle: { type: "null" }
 
     ElementActionRequest:
       type: object

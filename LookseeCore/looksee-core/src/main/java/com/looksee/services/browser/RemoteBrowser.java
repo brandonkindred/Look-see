@@ -14,6 +14,8 @@ import com.looksee.browsing.generated.model.ViewportState;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import javax.imageio.ImageIO;
 import org.slf4j.Logger;
@@ -280,15 +282,42 @@ public class RemoteBrowser extends Browser {
 
     @Override
     public WebElement findElement(String xpath) throws WebDriverException {
-        ElementState state = client.findElement(sessionId, xpath);
-        if (!Boolean.TRUE.equals(state.getFound())) {
+        // Always resolve via an indexed locator in one round-trip so the
+        // returned handle and source xpath describe the same DOM snapshot.
+        // Nested finds then compose against that concrete node rather than
+        // every sibling that matched the original non-unique xpath.
+        String sourceXpath = RemoteWebElement.toIndexedSourceXpath(xpath);
+        ElementState state = RemoteWebElement.findElementCompat(client, sessionId, sourceXpath);
+        if (RemoteWebElement.isExplicitMiss(state)) {
             throw new NoSuchElementException(
                 "RemoteBrowser: element not found for xpath=" + xpath);
         }
         // Pass the BrowsingClient through so the returned element can route
         // its own WebElement-API calls (phase 3f) without needing this
         // RemoteBrowser as a parent reference.
-        return new RemoteWebElement(sessionId, xpath, state, client);
+        return new RemoteWebElement(sessionId, sourceXpath, state, client);
+    }
+
+    @Override
+    public List<WebElement> findElements(String xpath) throws WebDriverException {
+        List<WebElement> matches = new ArrayList<>();
+        // Enumerate until the first miss — Selenium returns the full set with no
+        // artificial cap. Each indexed lookup is a separate round-trip; a stable
+        // plural snapshot still needs a server-side findElements under the lock.
+        for (int index = 1; ; index++) {
+            String indexedXpath = "(" + xpath + ")[" + index + "]";
+            // Current browser-service: HTTP 200 + found=false ends the loop.
+            // Legacy draft servers may 404 with an element-not-found payload;
+            // findElementCompat maps only those to found=false. Session expiry
+            // and unclassified 404s still propagate. Null ElementState is a
+            // protocol failure (not a miss) and must not truncate the list.
+            ElementState state = RemoteWebElement.findElementCompat(
+                client, sessionId, indexedXpath);
+            if (RemoteWebElement.isExplicitMiss(state)) {
+                return matches;
+            }
+            matches.add(new RemoteWebElement(sessionId, indexedXpath, state, client));
+        }
     }
 
     @Override

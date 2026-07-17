@@ -25,6 +25,10 @@ class BrowserServiceExtractTagFromXpathTest {
     @Test void nestedAbsolutePath()     { assertEquals("span", extract("/html/body/div[1]/p/span")); }
     @Test void rootedTag()              { assertEquals("html", extract("/html")); }
     @Test void unprefixedTag()          { assertEquals("body", extract("body")); }
+    @Test void parenthesizedIndexedTag(){ assertEquals("form", extract("(//form)[1]")); }
+    @Test void parenthesizedPredicateTag() {
+        assertEquals("div", extract("(//div[@id='x'])[2]"));
+    }
     @Test void emptyXpath_returnsEmpty(){ assertEquals("",     extract("")); }
     @Test void nullXpath_returnsEmpty() { assertEquals("",     extract(null)); }
 

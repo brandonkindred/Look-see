@@ -1,18 +1,24 @@
 package com.looksee.services.browser;
 
 import com.looksee.browsing.client.BrowsingClient;
+import com.looksee.browsing.client.BrowsingClientException;
+import com.looksee.browsing.generated.ApiException;
 import com.looksee.browsing.generated.model.ElementAction;
 import com.looksee.browsing.generated.model.ElementState;
 import com.looksee.browsing.generated.model.Rect;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import org.openqa.selenium.By;
 import org.openqa.selenium.Dimension;
+import org.openqa.selenium.NoSuchElementException;
 import org.openqa.selenium.OutputType;
 import org.openqa.selenium.Point;
 import org.openqa.selenium.Rectangle;
+import org.openqa.selenium.StaleElementReferenceException;
 import org.openqa.selenium.WebElement;
 
 /**
@@ -40,11 +46,6 @@ import org.openqa.selenium.WebElement;
  * which would be a new finding to reconcile in phase 3c.
  */
 public final class RemoteWebElement implements WebElement {
-
-    private static final String PHASE_3C =
-        "RemoteWebElement: this WebElement op is deferred to phase 3c "
-        + "(route through Browser.performClick / performAction / extractAttributes / "
-        + "getElementScreenshot / scrollToElement instead)";
 
     private final String sessionId;
     private final String elementHandle;
@@ -103,11 +104,185 @@ public final class RemoteWebElement implements WebElement {
         return client;
     }
 
+    private String requireSourceXpath() {
+        if (sourceXpath == null) {
+            throw new UnsupportedOperationException(
+                "RemoteWebElement.findElement(s): this element was constructed without a source xpath "
+                + "and cannot compose a nested lookup. Construct via RemoteBrowser.findElement.");
+        }
+        return sourceXpath;
+    }
+
+    /**
+     * Composes the supported relative Selenium locator forms into a document-relative xpath.
+     * Nested remote lookup deliberately supports only xpath starting with {@code ./} or
+     * {@code .//}, the parent axis {@code ..}, plus tag names, because the browser-service
+     * exposes a singular xpath find.
+     */
+    static String composeRelativeXpath(String parentXpath, By by) {
+        Objects.requireNonNull(parentXpath, "parentXpath");
+        Objects.requireNonNull(by, "by");
+        // Parenthesize so top-level unions / predicates keep their meaning when a
+        // relative path is appended (e.g. `(//a | //b)//c` vs `//a | //b//c`).
+        String scopedParent = "(" + parentXpath + ")";
+        String locator = by.toString();
+        if (locator.startsWith("By.xpath: ")) {
+            String relativeXpath = locator.substring("By.xpath: ".length()).trim();
+            if ("..".equals(relativeXpath) || "./..".equals(relativeXpath)) {
+                return scopedParent + "/..";
+            }
+            if (relativeXpath.startsWith("./") || relativeXpath.startsWith(".//")) {
+                return scopedParent + relativeXpath.substring(1);
+            }
+            throw new UnsupportedOperationException(
+                "RemoteWebElement: only relative xpath (./, .//, or ..) supported, got "
+                    + relativeXpath);
+        }
+        if (locator.startsWith("By.tagName: ")) {
+            String tagName = locator.substring("By.tagName: ".length()).trim();
+            return scopedParent + "//" + tagName;
+        }
+        throw new UnsupportedOperationException(
+            "RemoteWebElement.findElement(s): unsupported By type: " + by);
+    }
+
+    /**
+     * Returns an indexed source xpath so singular finds bind handle and locator
+     * from the same request. Always applies an outer {@code (xpath)[1]} — even
+     * when the expression already ends in a numeric predicate — because trailing
+     * predicates like {@code //section/div[1]} are per-axis, not globally unique.
+     * Re-wrapping an already-global {@code (expr)[n]} as {@code ((expr)[n])[1]}
+     * is a no-op for the single selected node.
+     */
+    static String toIndexedSourceXpath(String xpath) {
+        if (xpath == null || xpath.isEmpty()) {
+            return xpath;
+        }
+        return "(" + xpath + ")[1]";
+    }
+
+    /**
+     * True when the server explicitly reported {@code found:false}.
+     * Null is a protocol failure and throws {@link BrowsingClientException}.
+     */
+    static boolean isExplicitMiss(ElementState state) {
+        requireElementState(state);
+        return !Boolean.TRUE.equals(state.getFound());
+    }
+
+    /**
+     * Null ElementState is a protocol/transport failure, not an xpath miss.
+     * Treating it as {@code found:false} would silently truncate plural finds.
+     */
+    static ElementState requireElementState(ElementState state) {
+        if (state == null) {
+            throw new BrowsingClientException("findElement returned null ElementState");
+        }
+        return state;
+    }
+
+    /**
+     * Resolves a singular find against browser-service with rolling-deploy
+     * compatibility: current servers return HTTP 200 + {@code found:false} for
+     * xpath misses and HTTP 404 only for {@code session_not_found}. Older draft
+     * stubs may 404 on a miss with an element-not-found payload; those alone
+     * are mapped to {@code found:false} so N+1 plural probes still terminate.
+     * Session-expiry and unclassified 404s (generic proxy/outage bodies) still
+     * propagate so callers do not treat infrastructure failures as empty matches.
+     */
+    static ElementState findElementCompat(BrowsingClient browsingClient,
+                                          String sessionId,
+                                          String xpath) {
+        try {
+            return requireElementState(browsingClient.findElement(sessionId, xpath));
+        } catch (BrowsingClientException e) {
+            if (isLegacyElementMiss404(e)) {
+                return new ElementState().found(false);
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * True only when a 404 is positively identified as an xpath miss from an
+     * older/draft server. Unclassified 404s and session-expiry 404s return
+     * false so they propagate as service failures.
+     */
+    static boolean isLegacyElementMiss404(BrowsingClientException e) {
+        ApiException api = unwrapApiException(e);
+        if (api == null || api.getCode() != 404) {
+            return false;
+        }
+        // Classify only the underlying API payload — not BrowsingClientException's
+        // wrapper message, which embeds sessionId + xpath and can false-match
+        // phrases like "element not found" from locator text.
+        String lower = apiErrorHaystack(api).toLowerCase(Locale.ROOT);
+        if (lower.contains("session_not_found") || lower.contains("session not found")) {
+            return false;
+        }
+        return lower.contains("element_not_found")
+            || lower.contains("element not found")
+            || lower.contains("no_such_element")
+            || lower.contains("no such element");
+    }
+
+    private static String apiErrorHaystack(ApiException api) {
+        StringBuilder haystack = new StringBuilder();
+        if (api.getMessage() != null) {
+            haystack.append(api.getMessage()).append('\n');
+        }
+        if (api.getResponseBody() != null) {
+            haystack.append(api.getResponseBody());
+        }
+        return haystack.toString();
+    }
+
+    private static ApiException unwrapApiException(BrowsingClientException e) {
+        Throwable cause = e.getCause();
+        return cause instanceof ApiException ? (ApiException) cause : null;
+    }
+
+    /**
+     * Confirms this element's handle still refers to the same DOM node that
+     * {@link #sourceXpath} currently selects, before composing a nested lookup.
+     * browser-service has no handle-scoped find, so xpath composition is the
+     * only nested path; this check fails closed when the locator has drifted.
+     *
+     * <p>Identity is checked via {@code executeScript} ({@code ===} between the
+     * stored handle and {@code document.evaluate}), not by comparing opaque
+     * handle strings: live browser-service allocates a new handle on every
+     * {@code /element/find} ({@code ElementHandleRegistry.put}), so a re-find
+     * of an unchanged node would otherwise always look "stale".
+     *
+     * <p>Transport / service failures from {@code executeScript} propagate as
+     * {@link BrowsingClientException}; only a successful non-true identity
+     * result is treated as stale.
+     *
+     * <p><b>TOCTOU:</b> validation and the subsequent child lookup are separate
+     * round-trips. A true atomic bind needs a server-side find relative to
+     * {@code element_handle} under the session lock.
+     */
+    private void requireSourceXpathStillBoundToHandle(BrowsingClient browsingClient) {
+        String xpath = requireSourceXpath();
+        Object sameNode = browsingClient.executeScript(sessionId,
+            "var orig = arguments[0];"
+            + "var xp = arguments[1];"
+            + "var r = document.evaluate(xp, document, null,"
+            + "  XPathResult.FIRST_ORDERED_NODE_TYPE, null);"
+            + "return orig != null && orig === r.singleNodeValue;",
+            List.of(Map.of("element_handle", elementHandle), xpath));
+        if (!Boolean.TRUE.equals(sameNode)) {
+            throw new StaleElementReferenceException(
+                "RemoteWebElement source xpath no longer resolves to the same DOM node as handle="
+                    + elementHandle + " (xpath=" + xpath + ")");
+        }
+    }
+
     public String getSessionId()     { return sessionId; }
     public String getElementHandle() { return elementHandle; }
 
-    /** Package-private: source xpath for re-fetching live state during waitForElementClickable. */
-    String getSourceXpath() { return sourceXpath; }
+    /** Source xpath used to obtain this element, when available. */
+    public String getSourceXpath() { return sourceXpath; }
 
     /** Package-private: used by {@link RemoteBrowser#extractAttributes(WebElement)}. */
     Map<String, String> cachedAttributes() { return attributes; }
@@ -131,7 +306,29 @@ public final class RemoteWebElement implements WebElement {
     }
 
     @Override public String getAttribute(String name) {
-        return attributes.get(name);
+        if (attributes.containsKey(name)) {
+            return attributes.get(name);
+        }
+        // extractAttributes only returns HTML attributes — DOM properties such
+        // as innerHTML / outerHTML are absent from the findElement cache.
+        // Fall back to executeScript so remote callers match Selenium's
+        // getAttribute property/attribute resolution.
+        if (client == null || name == null) {
+            return null;
+        }
+        Object result = requireClient("getAttribute").executeScript(sessionId,
+            "var el = arguments[0], n = arguments[1];"
+            + "if (n === 'innerHTML') return el.innerHTML;"
+            + "if (n === 'outerHTML') return el.outerHTML;"
+            + "var attr = el.getAttribute(n);"
+            + "if (attr !== null) return attr;"
+            // Selenium getAttribute: boolean IDL properties are "true" or null,
+            // never the string "false" (e.g. unchecked checkbox `checked`).
+            + "var prop = el[n];"
+            + "if (typeof prop === 'boolean') return prop ? 'true' : null;"
+            + "return prop == null ? null : String(prop);",
+            List.of(Map.of("element_handle", elementHandle), name));
+        return result == null ? null : result.toString();
     }
 
     // --- Unsupported (phase 3c) ------------------------------------------
@@ -234,14 +431,72 @@ public final class RemoteWebElement implements WebElement {
 
     @Override
     public String getText() {
+        // WebDriver getText returns '' for non-rendered elements (e.g. display:none).
+        // Chromium's innerText getter falls back to textContent when not rendered,
+        // so visibility must be checked first — never read textContent as a
+        // hidden-element fallback. textContent is only used for displayed nodes
+        // that lack innerText (e.g. some SVG).
         Object r = requireClient("getText").executeScript(sessionId,
-            "return arguments[0].textContent;",
+            "var el = arguments[0];"
+            + "function isShown(e) {"
+            + "  if (!e || e.nodeType !== 1) return false;"
+            + "  if (e.hidden === true) return false;"
+            + "  var s = window.getComputedStyle(e);"
+            + "  if (!s || s.display === 'none' || s.visibility === 'hidden') return false;"
+            + "  return true;"
+            + "}"
+            + "for (var n = el; n && n.nodeType === 1; n = n.parentElement) {"
+            + "  if (!isShown(n)) return '';"
+            + "}"
+            + "var t = el.innerText;"
+            + "if (t == null || t === undefined) t = el.textContent;"
+            + "return t == null ? '' : String(t);",
             List.of(Map.of("element_handle", elementHandle)));
         return r == null ? "" : r.toString();
     }
 
-    @Override public java.util.List<WebElement> findElements(By by) { throw new UnsupportedOperationException(PHASE_3C + " (findElements)"); }
-    @Override public WebElement findElement(By by)          { throw new UnsupportedOperationException(PHASE_3C + " (findElement-nested)"); }
+    @Override
+    public List<WebElement> findElements(By by) {
+        String xpath = composeRelativeXpath(requireSourceXpath(), by);
+        BrowsingClient browsingClient = requireClient("findElements");
+        requireSourceXpathStillBoundToHandle(browsingClient);
+        List<WebElement> matches = new ArrayList<>();
+        // Full Selenium semantics: enumerate until the first miss, no artificial cap.
+        for (int index = 1; ; index++) {
+            String indexedXpath = "(" + xpath + ")[" + index + "]";
+            // HTTP 200 + found=false ends enumeration. Legacy draft 404s that
+            // positively identify an element miss map to found=false;
+            // session_not_found and unclassified 404s still propagate
+            // (see findElementCompat).
+            //
+            // Each indexed lookup is a separate round-trip. True single-snapshot
+            // enumeration needs a server-side plural find under the session lock.
+            ElementState state = findElementCompat(browsingClient, sessionId, indexedXpath);
+            if (isExplicitMiss(state)) {
+                // Parent may have been removed/replaced after the pre-loop check.
+                // Prefer stale over claiming an empty remainder (Selenium semantics).
+                requireSourceXpathStillBoundToHandle(browsingClient);
+                return matches;
+            }
+            matches.add(new RemoteWebElement(sessionId, indexedXpath, state, browsingClient));
+        }
+    }
+
+    @Override
+    public WebElement findElement(By by) {
+        String composed = composeRelativeXpath(requireSourceXpath(), by);
+        BrowsingClient browsingClient = requireClient("findElement");
+        requireSourceXpathStillBoundToHandle(browsingClient);
+        // Index in the same request that produces the handle so nested
+        // composition stays scoped to this child, not every matching sibling.
+        String childSourceXpath = toIndexedSourceXpath(composed);
+        ElementState state = findElementCompat(browsingClient, sessionId, childSourceXpath);
+        if (isExplicitMiss(state)) {
+            requireSourceXpathStillBoundToHandle(browsingClient);
+            throw new NoSuchElementException("No nested element found for xpath: " + childSourceXpath);
+        }
+        return new RemoteWebElement(sessionId, childSourceXpath, state, client);
+    }
 
     @Override
     public String getCssValue(String propertyName) {

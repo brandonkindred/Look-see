@@ -253,6 +253,21 @@ public class Browser {
 	}
 
 	/**
+	 * Finds all elements matching an xpath.
+	 *
+	 * @param xpath the xpath to find elements at
+	 * @return elements located at the provided xpath
+	 *
+	 * precondition: xpath != null
+	 * precondition: !xpath.isEmpty()
+	 */
+	public List<WebElement> findElements(String xpath) throws WebDriverException {
+		assert xpath != null;
+		assert !xpath.isEmpty();
+		return getDriver().findElements(By.xpath(xpath));
+	}
+
+	/**
 	 * Checks if an element is displayed.
 	 *
 	 * @param xpath the XPath of the element to check

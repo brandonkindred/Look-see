@@ -1,7 +1,10 @@
 package com.looksee.services.browser;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
+import com.looksee.browsing.client.BrowsingClient;
 import com.looksee.browsing.generated.model.ElementState;
 import com.looksee.browsing.generated.model.Rect;
 import java.util.Map;
@@ -65,7 +68,53 @@ class RemoteWebElementTest {
             state("h1", true, Map.of("id", "submit", "class", "btn primary"), null));
         assertEquals("submit", el.getAttribute("id"));
         assertEquals("btn primary", el.getAttribute("class"));
+        // No client → missing keys stay null (no executeScript fallback).
         assertNull(el.getAttribute("missing"));
+    }
+
+    @Test
+    void getAttribute_fetchesDomPropertiesViaExecuteScriptWhenMissingFromCache() {
+        BrowsingClient client = mock(BrowsingClient.class);
+        RemoteWebElement el = new RemoteWebElement(
+            "s1", "//form", state("h1", true, Map.of("id", "contact"), null), client);
+        when(client.executeScript(eq("s1"), anyString(), any())).thenAnswer(invocation -> {
+            java.util.List<?> args = invocation.getArgument(2);
+            String name = args.get(1).toString();
+            if ("innerHTML".equals(name)) return "<input>";
+            if ("outerHTML".equals(name)) return "<form id=\"contact\"><input></form>";
+            return null;
+        });
+
+        assertEquals("<input>", el.getAttribute("innerHTML"));
+        assertEquals("<form id=\"contact\"><input></form>", el.getAttribute("outerHTML"));
+
+        clearInvocations(client);
+        // Cached HTML attribute still served without a round-trip.
+        assertEquals("contact", el.getAttribute("id"));
+        verify(client, never()).executeScript(any(), any(), any());
+    }
+
+    @Test
+    void getAttribute_returnsNullForFalseBooleanDomProperties() {
+        BrowsingClient client = mock(BrowsingClient.class);
+        RemoteWebElement el = new RemoteWebElement(
+            "s1", "//input", state("h1", true, Map.of(), null), client);
+        when(client.executeScript(eq("s1"), anyString(), any())).thenAnswer(invocation -> {
+            String script = invocation.getArgument(1);
+            // Assert the remote script preserves Selenium boolean-attribute semantics.
+            assertTrue(script.contains("typeof prop === 'boolean'"),
+                "getAttribute fallback must special-case boolean IDL properties");
+            java.util.List<?> args = invocation.getArgument(2);
+            String name = args.get(1).toString();
+            // Simulate: absent HTML attr, false DOM property (unchecked / enabled).
+            if ("checked".equals(name) || "disabled".equals(name)) {
+                return null;
+            }
+            return null;
+        });
+
+        assertNull(el.getAttribute("checked"));
+        assertNull(el.getAttribute("disabled"));
     }
 
     @Test
@@ -89,24 +138,81 @@ class RemoteWebElementTest {
     }
 
     @Test
-    void unsupportedWebElementMethods_allThrowWithPhase3cMarker() {
-        // After phase 3f, only findElement(By) and findElements(By) still
-        // throw the phase-3c marker — both need either client-side xpath
-        // composition or a new server-side find-children endpoint (phase 3g).
-        // The other 9 phase-3c-deferred methods got real implementations
-        // routed through executeScript / performElementAction /
-        // captureElementScreenshot — covered in their own test cases below.
+    void nestedFinds_requireSourceXpath() {
         RemoteWebElement el = new RemoteWebElement("s1", state("h1", true, Map.of(), null));
 
         Runnable[] checks = new Runnable[] {
-            () -> el.findElements(By.xpath("//*")),
-            () -> el.findElement(By.xpath("//*")),
+            () -> el.findElements(By.xpath("./child")),
+            () -> el.findElement(By.xpath("./child")),
         };
         for (Runnable r : checks) {
             UnsupportedOperationException ex = assertThrows(UnsupportedOperationException.class, r::run);
-            assertTrue(ex.getMessage().contains("phase 3c"),
-                "message should point at phase 3c: " + ex.getMessage());
+            assertTrue(ex.getMessage().contains("source xpath"),
+                "message should point at the missing source xpath: " + ex.getMessage());
         }
+    }
+
+    @Test
+    void nestedFinds_rejectUnsupportedByTypes() {
+        RemoteWebElement el = new RemoteWebElement("s1", "//form", state("h1", true, Map.of(), null),
+            mock(BrowsingClient.class));
+
+        UnsupportedOperationException ex = assertThrows(UnsupportedOperationException.class,
+            () -> el.findElement(By.id("submit")));
+
+        assertTrue(ex.getMessage().contains("unsupported By type"),
+            "message should identify the unsupported locator: " + ex.getMessage());
+    }
+
+    @Test
+    void nestedFinds_rejectAbsoluteXpaths() {
+        RemoteWebElement el = new RemoteWebElement("s1", "//form", state("h1", true, Map.of(), null),
+            mock(BrowsingClient.class));
+
+        UnsupportedOperationException ex = assertThrows(UnsupportedOperationException.class,
+            () -> el.findElements(By.xpath("//tr")));
+
+        assertTrue(ex.getMessage().contains("relative xpath"),
+            "message should identify the relative xpath requirement: " + ex.getMessage());
+    }
+
+    @Test
+    void composeRelativeXpath_parenthesizesParentBeforeAppending() {
+        assertEquals("(//section[@id='x'] | //aside[@id='y'])//button",
+            RemoteWebElement.composeRelativeXpath(
+                "//section[@id='x'] | //aside[@id='y']", By.xpath(".//button")));
+    }
+
+    @Test
+    void composeRelativeXpath_supportsParentAxis() {
+        assertEquals("(//form[@id='login'])/..",
+            RemoteWebElement.composeRelativeXpath("//form[@id='login']", By.xpath("..")));
+    }
+
+    @Test
+    void toIndexedSourceXpath_alwaysAppliesOuterIndex() {
+        assertEquals("(//section/div[(true())][1])[1]",
+            RemoteWebElement.toIndexedSourceXpath("//section/div[(true())][1]"));
+        assertEquals("((//form)[2])[1]",
+            RemoteWebElement.toIndexedSourceXpath("(//form)[2]"));
+    }
+
+    @Test
+    void findElement_indexesNestedSourceXpathInSameLookup() {
+        BrowsingClient client = mock(BrowsingClient.class);
+        ElementState parent = state("h1", true, Map.of(), null);
+        RemoteWebElement el = new RemoteWebElement("s1", "//form", parent, client);
+        ElementState child = new ElementState()
+            .elementHandle("h2").found(true).displayed(true).attributes(Map.of());
+        when(client.executeScript(eq("s1"), argThat(script ->
+                script != null && script.contains("document.evaluate")), any()))
+            .thenReturn(Boolean.TRUE);
+        when(client.findElement("s1", "((//form)//input)[1]")).thenReturn(child);
+
+        RemoteWebElement result = (RemoteWebElement) el.findElement(By.tagName("input"));
+
+        assertEquals("((//form)//input)[1]", result.getSourceXpath());
+        verify(client, never()).findElement(eq("s1"), eq("(//form)//input"));
     }
 
     @Test

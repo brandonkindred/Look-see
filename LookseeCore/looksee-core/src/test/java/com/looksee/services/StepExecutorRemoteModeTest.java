@@ -30,7 +30,7 @@ class StepExecutorRemoteModeTest {
     @Test
     void simpleStep_routesThroughPerformClick() throws Exception {
         BrowsingClient client = mock(BrowsingClient.class);
-        when(client.findElement(eq("s-1"), eq("//button"))).thenReturn(state("h-btn"));
+        when(client.findElement(eq("s-1"), eq("(//button)[1]"))).thenReturn(state("h-btn"));
         RemoteBrowser remote = new RemoteBrowser(client, "s-1", "chrome");
 
         com.looksee.models.ElementState el = new com.looksee.models.ElementState();
@@ -40,7 +40,7 @@ class StepExecutorRemoteModeTest {
 
         new StepExecutor().execute(remote, step);
 
-        verify(client).findElement("s-1", "//button");
+        verify(client).findElement("s-1", "(//button)[1]");
         verify(client).scrollToElementCentered("s-1", "h-btn");
         verify(client).performElementAction("s-1", "h-btn", ElementAction.CLICK, null);
         // Crucially: the only getDriver()-bypass methods that fired above.
@@ -51,9 +51,9 @@ class StepExecutorRemoteModeTest {
     @Test
     void loginStep_usesPerformActionForUsernamePasswordSubmit() throws Exception {
         BrowsingClient client = mock(BrowsingClient.class);
-        when(client.findElement(eq("s-1"), eq("//username"))).thenReturn(state("h-u"));
-        when(client.findElement(eq("s-1"), eq("//password"))).thenReturn(state("h-p"));
-        when(client.findElement(eq("s-1"), eq("//submit"))).thenReturn(state("h-s"));
+        when(client.findElement(eq("s-1"), eq("(//username)[1]"))).thenReturn(state("h-u"));
+        when(client.findElement(eq("s-1"), eq("(//password)[1]"))).thenReturn(state("h-p"));
+        when(client.findElement(eq("s-1"), eq("(//submit)[1]"))).thenReturn(state("h-s"));
         RemoteBrowser remote = new RemoteBrowser(client, "s-1", "chrome");
 
         LoginStep step = new LoginStep();
@@ -67,9 +67,9 @@ class StepExecutorRemoteModeTest {
 
         new StepExecutor().execute(remote, step);
 
-        verify(client).findElement("s-1", "//username");
-        verify(client).findElement("s-1", "//password");
-        verify(client).findElement("s-1", "//submit");
+        verify(client).findElement("s-1", "(//username)[1]");
+        verify(client).findElement("s-1", "(//password)[1]");
+        verify(client).findElement("s-1", "(//submit)[1]");
         verify(client).performElementAction("s-1", "h-u", ElementAction.SEND_KEYS, "alice");
         verify(client).performElementAction("s-1", "h-p", ElementAction.SEND_KEYS, "secret");
         verify(client).performElementAction("s-1", "h-s", ElementAction.CLICK, "");
