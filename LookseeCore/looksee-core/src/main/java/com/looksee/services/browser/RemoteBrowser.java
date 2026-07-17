@@ -306,11 +306,20 @@ public class RemoteBrowser extends Browser {
             String indexedXpath = "(" + xpath + ")[" + index + "]";
             // browser-service returns HTTP 200 + found=false for missing
             // elements; HTTP 404 means session expiry and must propagate.
+            //
+            // Indexed lookups are independent round-trips. A stable plural
+            // snapshot requires a server-side findElements under the session lock.
             ElementState state = client.findElement(sessionId, indexedXpath);
             if (!Boolean.TRUE.equals(state.getFound())) {
                 return matches;
             }
             matches.add(new RemoteWebElement(sessionId, indexedXpath, state, client));
+        }
+        // Exactly MAX matches is valid; only fail when a further match exists.
+        ElementState overflow = client.findElement(
+            sessionId, "(" + xpath + ")[" + (MAX_FIND_ELEMENTS + 1) + "]");
+        if (!Boolean.TRUE.equals(overflow.getFound())) {
+            return matches;
         }
         throw new WebDriverException(
             "RemoteBrowser.findElements exceeded " + MAX_FIND_ELEMENTS

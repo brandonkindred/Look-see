@@ -167,11 +167,21 @@ class RemoteWebElementTest {
     }
 
     @Test
+    void toIndexedSourceXpath_alwaysAppliesOuterIndex() {
+        assertEquals("(//section/div[(true())][1])[1]",
+            RemoteWebElement.toIndexedSourceXpath("//section/div[(true())][1]"));
+        assertEquals("((//form)[2])[1]",
+            RemoteWebElement.toIndexedSourceXpath("(//form)[2]"));
+    }
+
+    @Test
     void findElement_indexesNestedSourceXpathInSameLookup() {
         BrowsingClient client = mock(BrowsingClient.class);
-        RemoteWebElement el = new RemoteWebElement("s1", "//form", state("h1", true, Map.of(), null), client);
+        ElementState parent = state("h1", true, Map.of(), null);
+        RemoteWebElement el = new RemoteWebElement("s1", "//form", parent, client);
         ElementState child = new ElementState()
             .elementHandle("h2").found(true).displayed(true).attributes(Map.of());
+        when(client.findElement("s1", "//form")).thenReturn(parent);
         when(client.findElement("s1", "((//form)//input)[1]")).thenReturn(child);
 
         RemoteWebElement result = (RemoteWebElement) el.findElement(By.tagName("input"));

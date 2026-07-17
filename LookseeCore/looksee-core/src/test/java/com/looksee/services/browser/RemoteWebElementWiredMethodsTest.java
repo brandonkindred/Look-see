@@ -36,6 +36,8 @@ class RemoteWebElementWiredMethodsTest {
         ElementState s = new ElementState()
             .elementHandle("h1").found(true).displayed(true).attributes(Map.of());
         el = new RemoteWebElement("s1", "//button", s, client);
+        // Nested finds re-resolve the parent source xpath first.
+        when(client.findElement("s1", "//button")).thenReturn(s);
     }
 
     // --- nested findElement(s) → /element/find ----------------------------
@@ -50,6 +52,7 @@ class RemoteWebElementWiredMethodsTest {
 
         assertEquals("h2", result.getElementHandle());
         assertEquals("((//button)/input)[1]", result.getSourceXpath());
+        verify(client).findElement("s1", "//button");
         verify(client).findElement("s1", "((//button)/input)[1]");
     }
 
@@ -79,6 +82,17 @@ class RemoteWebElementWiredMethodsTest {
     }
 
     @Test
+    void findElement_throwsStaleWhenParentSourceXpathDrifted() {
+        when(client.findElement("s1", "//button"))
+            .thenReturn(new ElementState()
+                .elementHandle("other-form").found(true).displayed(true).attributes(Map.of()));
+
+        assertThrows(org.openqa.selenium.StaleElementReferenceException.class,
+            () -> el.findElement(By.xpath("./input")));
+        verify(client, never()).findElement(eq("s1"), startsWith("((//button)"));
+    }
+
+    @Test
     void findElements_propagatesSessionNotFoundInsteadOfTruncating() {
         ElementState first = new ElementState()
             .elementHandle("tr-1").found(true).displayed(true).attributes(Map.of());
@@ -98,11 +112,31 @@ class RemoteWebElementWiredMethodsTest {
         when(client.findElement(eq("s1"), anyString()))
             .thenReturn(new ElementState()
                 .elementHandle("h").found(true).displayed(true).attributes(Map.of()));
+        // Parent verify must still see the original handle.
+        when(client.findElement("s1", "//button"))
+            .thenReturn(new ElementState()
+                .elementHandle("h1").found(true).displayed(true).attributes(Map.of()));
 
         WebDriverException ex = assertThrows(WebDriverException.class,
             () -> el.findElements(By.tagName("tr")));
         assertTrue(ex.getMessage().contains("refusing to silently truncate"),
             ex.getMessage());
+    }
+
+    @Test
+    void findElements_allowsExactMatchLimit() {
+        when(client.findElement(eq("s1"), anyString()))
+            .thenReturn(new ElementState()
+                .elementHandle("h").found(true).displayed(true).attributes(Map.of()));
+        when(client.findElement("s1", "//button"))
+            .thenReturn(new ElementState()
+                .elementHandle("h1").found(true).displayed(true).attributes(Map.of()));
+        when(client.findElement("s1", "((//button)//tr)[501]"))
+            .thenReturn(new ElementState().found(false));
+
+        List<WebElement> results = el.findElements(By.tagName("tr"));
+
+        assertEquals(500, results.size());
     }
 
     // --- click + sendKeys → /element/action -------------------------------

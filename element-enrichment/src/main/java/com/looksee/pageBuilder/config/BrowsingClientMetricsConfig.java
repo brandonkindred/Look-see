@@ -3,9 +3,8 @@ package com.looksee.pageBuilder.config;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.config.MeterFilter;
-import javax.annotation.PostConstruct;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.actuate.autoconfigure.metrics.MeterRegistryCustomizer;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
@@ -18,20 +17,16 @@ import org.springframework.context.annotation.Configuration;
  * this config adds the {@code consumer} tag so dashboards can filter by caller
  * without the facade needing to know who's calling.
  *
- * <p>Guarded by {@link ConditionalOnBean}: if element-enrichment is deployed without
- * a {@code MeterRegistry} (no Micrometer registry configured), this config is
- * silently skipped and nothing breaks — same safety contract as the BrowsingClient
- * registration.
+ * <p>Registered as a {@link MeterRegistryCustomizer} (not {@code @ConditionalOnBean}
+ * + {@code @PostConstruct}) so Boot applies the tag when Actuator creates the
+ * registry, regardless of component-scan vs auto-config ordering.
  */
 @Configuration
-@ConditionalOnBean(MeterRegistry.class)
 public class BrowsingClientMetricsConfig {
 
-    @Autowired
-    private MeterRegistry meterRegistry;
-
-    @PostConstruct
-    public void applyConsumerCommonTag() {
-        meterRegistry.config().meterFilter(MeterFilter.commonTags(Tags.of("consumer", "element-enrichment")));
+    @Bean
+    public MeterRegistryCustomizer<MeterRegistry> browsingClientConsumerTag() {
+        return registry -> registry.config()
+            .meterFilter(MeterFilter.commonTags(Tags.of("consumer", "element-enrichment")));
     }
 }

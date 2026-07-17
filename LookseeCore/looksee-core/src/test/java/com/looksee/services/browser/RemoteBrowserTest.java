@@ -142,15 +142,15 @@ class RemoteBrowserTest {
     }
 
     @Test
-    void findElement_preservesAlreadyIndexedSourceXpath() {
+    void findElement_alwaysAppliesOuterIndexEvenWhenAlreadyIndexed() {
         ElementState only = new ElementState()
             .elementHandle("f1").found(true).displayed(true).attributes(Map.of());
-        when(client.findElement("session-1", "(//form)[2]")).thenReturn(only);
+        when(client.findElement("session-1", "((//form)[2])[1]")).thenReturn(only);
 
         RemoteWebElement el = (RemoteWebElement) remote.findElement("(//form)[2]");
 
-        assertEquals("(//form)[2]", el.getSourceXpath());
-        verify(client).findElement("session-1", "(//form)[2]");
+        assertEquals("((//form)[2])[1]", el.getSourceXpath());
+        verify(client).findElement("session-1", "((//form)[2])[1]");
     }
 
     @Test

@@ -21,14 +21,15 @@ class TableRemoteModeTest {
     @Test
     void loadHeaders_invokesFindElementsOnRemoteWebElementWithoutThrowing() {
         BrowsingClient client = mock(BrowsingClient.class);
+        ElementState thead = new ElementState()
+            .elementHandle("thead-h")
+            .found(true)
+            .displayed(true)
+            .attributes(Map.of());
         RemoteWebElement tableHeader = new RemoteWebElement(
             "s1",
             "//table/thead",
-            new ElementState()
-                .elementHandle("thead-h")
-                .found(true)
-                .displayed(true)
-                .attributes(Map.of()),
+            thead,
             client);
 
         ElementState firstRow = new ElementState()
@@ -41,6 +42,7 @@ class TableRemoteModeTest {
             .found(true)
             .displayed(true)
             .attributes(Map.of());
+        when(client.findElement("s1", "//table/thead")).thenReturn(thead);
         when(client.findElement("s1", "((//table/thead)/tr)[1]")).thenReturn(firstRow);
         when(client.findElement("s1", "((//table/thead)/tr)[2]")).thenReturn(secondRow);
         when(client.findElement("s1", "((//table/thead)/tr)[3]"))
@@ -62,16 +64,18 @@ class TableRemoteModeTest {
     @Test
     void loadHeaders_acceptsRemoteWebElementAsWebElementInterface() {
         BrowsingClient client = mock(BrowsingClient.class);
+        ElementState thead = new ElementState()
+            .elementHandle("thead-h")
+            .found(true)
+            .displayed(true)
+            .attributes(Map.of());
         WebElement tableHeader = new RemoteWebElement(
             "s1",
             "//table/thead",
-            new ElementState()
-                .elementHandle("thead-h")
-                .found(true)
-                .displayed(true)
-                .attributes(Map.of()),
+            thead,
             client);
-        when(client.findElement(eq("s1"), anyString()))
+        when(client.findElement("s1", "//table/thead")).thenReturn(thead);
+        when(client.findElement(eq("s1"), startsWith("((//table/thead)/tr)")))
             .thenReturn(new ElementState().found(false));
 
         Table table = new Table();

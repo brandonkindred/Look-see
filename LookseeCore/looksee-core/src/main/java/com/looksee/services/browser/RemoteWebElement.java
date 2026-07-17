@@ -15,6 +15,7 @@ import org.openqa.selenium.NoSuchElementException;
 import org.openqa.selenium.OutputType;
 import org.openqa.selenium.Point;
 import org.openqa.selenium.Rectangle;
+import org.openqa.selenium.StaleElementReferenceException;
 import org.openqa.selenium.WebDriverException;
 import org.openqa.selenium.WebElement;
 
@@ -147,10 +148,14 @@ public final class RemoteWebElement implements WebElement {
 
     /**
      * Returns an indexed source xpath so singular finds bind handle and locator
-     * from the same request. Already-indexed locators are left unchanged.
+     * from the same request. Always applies an outer {@code (xpath)[1]} — even
+     * when the expression already ends in a numeric predicate — because trailing
+     * predicates like {@code //section/div[1]} are per-axis, not globally unique.
+     * Re-wrapping an already-global {@code (expr)[n]} as {@code ((expr)[n])[1]}
+     * is a no-op for the single selected node.
      */
     static String toIndexedSourceXpath(String xpath) {
-        if (xpath == null || xpath.isEmpty() || xpath.matches(".*\\)\\[\\d+\\]\\s*$")) {
+        if (xpath == null || xpath.isEmpty()) {
             return xpath;
         }
         return "(" + xpath + ")[1]";
@@ -158,6 +163,22 @@ public final class RemoteWebElement implements WebElement {
 
     private static boolean isNotFound(ElementState state) {
         return state == null || !Boolean.TRUE.equals(state.getFound());
+    }
+
+    /**
+     * Re-resolves {@link #sourceXpath} and confirms it still identifies this
+     * element's handle before composing a nested lookup. browser-service has no
+     * handle-scoped find, so xpath composition is the only nested path; this
+     * check fails closed when the DOM has shifted the locator onto a different node.
+     */
+    private void requireSourceXpathStillBoundToHandle(BrowsingClient browsingClient) {
+        String xpath = requireSourceXpath();
+        ElementState current = browsingClient.findElement(sessionId, xpath);
+        if (isNotFound(current) || !elementHandle.equals(current.getElementHandle())) {
+            throw new StaleElementReferenceException(
+                "RemoteWebElement source xpath no longer resolves to handle="
+                    + elementHandle + " (xpath=" + xpath + ")");
+        }
     }
 
     public String getSessionId()     { return sessionId; }
@@ -320,16 +341,26 @@ public final class RemoteWebElement implements WebElement {
     public List<WebElement> findElements(By by) {
         String xpath = composeRelativeXpath(requireSourceXpath(), by);
         BrowsingClient browsingClient = requireClient("findElements");
+        requireSourceXpathStillBoundToHandle(browsingClient);
         List<WebElement> matches = new ArrayList<>();
         for (int index = 1; index <= MAX_NESTED_FIND_ELEMENTS; index++) {
             String indexedXpath = "(" + xpath + ")[" + index + "]";
             // HTTP 200 + found=false ends enumeration; HTTP 404 (session gone)
             // must not be treated as an empty remainder.
+            //
+            // Each indexed lookup is a separate round-trip. True single-snapshot
+            // enumeration needs a server-side plural find under the session lock.
             ElementState state = browsingClient.findElement(sessionId, indexedXpath);
             if (isNotFound(state)) {
                 return matches;
             }
             matches.add(new RemoteWebElement(sessionId, indexedXpath, state, browsingClient));
+        }
+        // Exactly MAX matches is valid; only fail when a further match exists.
+        ElementState overflow = browsingClient.findElement(
+            sessionId, "(" + xpath + ")[" + (MAX_NESTED_FIND_ELEMENTS + 1) + "]");
+        if (isNotFound(overflow)) {
+            return matches;
         }
         throw new WebDriverException(
             "RemoteWebElement.findElements exceeded " + MAX_NESTED_FIND_ELEMENTS
@@ -340,14 +371,16 @@ public final class RemoteWebElement implements WebElement {
     @Override
     public WebElement findElement(By by) {
         String composed = composeRelativeXpath(requireSourceXpath(), by);
+        BrowsingClient browsingClient = requireClient("findElement");
+        requireSourceXpathStillBoundToHandle(browsingClient);
         // Index in the same request that produces the handle so nested
         // composition stays scoped to this child, not every matching sibling.
-        String sourceXpath = toIndexedSourceXpath(composed);
-        ElementState state = requireClient("findElement").findElement(sessionId, sourceXpath);
+        String childSourceXpath = toIndexedSourceXpath(composed);
+        ElementState state = browsingClient.findElement(sessionId, childSourceXpath);
         if (isNotFound(state)) {
-            throw new NoSuchElementException("No nested element found for xpath: " + sourceXpath);
+            throw new NoSuchElementException("No nested element found for xpath: " + childSourceXpath);
         }
-        return new RemoteWebElement(sessionId, sourceXpath, state, client);
+        return new RemoteWebElement(sessionId, childSourceXpath, state, client);
     }
 
     @Override
